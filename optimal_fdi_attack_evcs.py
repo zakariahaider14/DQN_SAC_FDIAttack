@@ -753,29 +753,47 @@ def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
 
 @tf.function
 def train_step(model, optimizer, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
-    """Optimized training step with memory cleanup"""
-    with tf.GradientTape() as tape:
-        # Use gradient accumulation for large batches
-        total_loss = 0
-        for mini_batch in tf.data.Dataset.from_tensor_slices(
-            (t, attack_actions, defend_actions)).batch(32):
-            t_batch, attack_batch, defend_batch = mini_batch
-            batch_loss = physics_loss(
-                model, t_batch, Y_bus_tf, bus_data, 
-                attack_batch, defend_batch
-            )[0]
-            total_loss += batch_loss / tf.cast(tf.shape(t)[0], tf.float32)
+    """Optimized training step with improved error handling and interruption management"""
+    try:
+        with tf.GradientTape() as tape:
+            # Use gradient accumulation for large batches
+            total_loss = 0
+            for mini_batch in tf.data.Dataset.from_tensor_slices(
+                (t, attack_actions, defend_actions)).batch(32):
+                t_batch, attack_batch, defend_batch = mini_batch
+                batch_loss = physics_loss(
+                    model, t_batch, Y_bus_tf, bus_data, 
+                    attack_batch, defend_batch
+                )[0]
+                total_loss += batch_loss / tf.cast(tf.shape(t)[0], tf.float32)
 
-    # Compute and apply gradients
-    gradients = tape.gradient(total_loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-    
-    # Clear memory
-    tf.keras.backend.clear_session()
-    return total_loss
+        # Compute and apply gradients with error checking
+        gradients = tape.gradient(total_loss, model.trainable_variables)
+        
+        # Check for valid gradients before applying
+        valid_gradients = []
+        for grad in gradients:
+            if grad is not None and not tf.reduce_any(tf.math.is_nan(grad)):
+                valid_gradients.append(grad)
+            else:
+                valid_gradients.append(tf.zeros_like(model.trainable_variables[len(valid_gradients)]))
+        
+        optimizer.apply_gradients(zip(valid_gradients, model.trainable_variables))
+        
+        # Clear memory
+        tf.keras.backend.clear_session()
+        return total_loss
+        
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Saving current state...")
+        return None
+        
+    except Exception as e:
+        print(f"Error in training step: {e}")
+        return None
 
 def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defender=None, epochs=2500, batch_size=64):
-    """Modified training function with improved batch handling and monitoring."""
+    """Modified training function with improved error handling and checkpointing"""
     # Initialize the PINN model if not provided
     initialize_conductance_matrices()
 
@@ -789,137 +807,67 @@ def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defen
     lr_schedule = CosineDecay(
         initial_learning_rate,
         decay_steps=epochs,
-        alpha=0.1  # Final learning rate will be 0.1 * initial_learning_rate
+        alpha=0.1
     )
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    # Ensure the model is built by calling it once with a dummy input
-    dummy_input = tf.random.uniform((1, 1))
-    _ = model(dummy_input)
+    # Create checkpoint manager
+    checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
+    checkpoint_dir = './training_checkpoints'
+    manager = tf.train.CheckpointManager(checkpoint, checkpoint_dir, max_to_keep=3)
 
-    # Use the custom environment for training with both agents
-    env = CompetingHybridEnv(
-        pinn_model=model,
-        y_bus_tf=Y_bus_tf,
-        bus_data=bus_data,
-        v_base_lv=V_BASE_DC,
-        dqn_agent=dqn_agent,
-        sac_attacker=sac_attacker,
-        sac_defender=sac_defender,
-        num_evcs=NUM_EVCS,
-        num_buses=NUM_BUSES,
-        time_step=TIME_STEP
-    )
-
-    # Initialize loss tracking
-    loss_history = {
-        'total_loss': [],
-        'power_flow_loss': [],
-        'evcs_loss': [],
-        'wac_loss': [],
-        'v_regulation_loss': []
-    }
-
-    # Training loop with error handling and monitoring
-    for epoch in range(epochs):
-        try:
-            # Get state and actions from environment
-            state = env.reset()[0]
-            
-            # Get actions from all agents if available
-            if all([dqn_agent, sac_attacker, sac_defender]):
-                # Get DQN action
-                dqn_action, _ = dqn_agent.predict(state)
-                dqn_decoded = env.decode_dqn_action(dqn_action)
-                
-                # Get SAC actions
-                attack_actions, _ = sac_attacker.predict(state)
-                defend_actions, _ = sac_defender.predict(state)
-            else:
-                # Default actions if agents not provided
-                attack_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
-                defend_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
-
-            # Create batched time points
-            t_batch = tf.random.uniform((batch_size, 1), minval=0, maxval=TOTAL_TIME)
-            
-            # Prepare actions for batch processing
-            attack_actions_batch = tf.tile(tf.expand_dims(attack_actions, 0), [batch_size, 1])
-            defend_actions_batch = tf.tile(tf.expand_dims(defend_actions, 0), [batch_size, 1])
-
+    try:
+        # Training loop with checkpointing
+        for epoch in range(epochs):
             try:
-                # Training step with loss computation
-                losses = train_step(
-                    model, 
-                    optimizer, 
-                    t_batch, 
-                    Y_bus_tf, 
+                # Get state and actions from environment
+                state = env.reset()[0]
+                
+                # Get actions from all agents
+                if all([dqn_agent, sac_attacker, sac_defender]):
+                    dqn_action, _ = dqn_agent.predict(state)
+                    dqn_decoded = env.decode_dqn_action(dqn_action)
+                    attack_actions, _ = sac_attacker.predict(state)
+                    defend_actions, _ = sac_defender.predict(state)
+                else:
+                    attack_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
+                    defend_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
+
+                # Create batched time points
+                t_batch = tf.random.uniform((batch_size, 1), minval=0, maxval=TOTAL_TIME)
+                
+                # Training step
+                loss = train_step(
+                    model, optimizer, t_batch, Y_bus_tf, 
                     tf.constant(bus_data, dtype=tf.float32),
-                    attack_actions_batch,
-                    defend_actions_batch
+                    attack_actions, defend_actions
                 )
                 
-                # Unpack and store losses
-                total_loss, power_flow_loss, evcs_total_loss, wac_loss, v_regulation_loss = losses
-                
-                loss_history['total_loss'].append(float(total_loss))
-                loss_history['power_flow_loss'].append(float(power_flow_loss))
-                loss_history['evcs_loss'].append(float(evcs_total_loss))
-                loss_history['wac_loss'].append(float(wac_loss))
-                loss_history['v_regulation_loss'].append(float(v_regulation_loss))
+                if loss is None:  # Training step failed or was interrupted
+                    print("Saving checkpoint due to interruption...")
+                    manager.save()
+                    break
 
-                # Print progress every 100 epochs
+                # Save checkpoint periodically
                 if epoch % 100 == 0:
-                    print(f"\nEpoch {epoch}/{epochs}")
-                    print(f"Total Loss: {float(total_loss):.6f}")
-                    print(f"Power Flow Loss: {float(power_flow_loss):.6f}")
-                    print(f"EVCS Loss: {float(evcs_total_loss):.6f}")
-                    print(f"WAC Loss: {float(wac_loss):.6f}")
-                    print(f"Voltage Regulation Loss: {float(v_regulation_loss):.6f}")
-                    
-                    # Save current loss history to CSV
-                    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    with open(f'loss_history_{current_time}.csv', 'w', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(['Epoch', 'Total Loss', 'Power Flow Loss', 'EVCS Loss', 'WAC Loss', 'V Regulation Loss'])
-                        for i in range(len(loss_history['total_loss'])):
-                            writer.writerow([
-                                i,
-                                loss_history['total_loss'][i],
-                                loss_history['power_flow_loss'][i],
-                                loss_history['evcs_loss'][i],
-                                loss_history['wac_loss'][i],
-                                loss_history['v_regulation_loss'][i]
-                            ])
+                    manager.save()
+                    print(f"Epoch {epoch}: Loss = {loss:.6f}")
 
-            except tf.errors.InvalidArgumentError as e:
-                print(f"TensorFlow error in training step: {e}")
+            except Exception as e:
+                print(f"Error in epoch {epoch}: {e}")
                 continue
 
-        except Exception as e:
-            print(f"Error during epoch {epoch}: {e}")
-            continue
-
-        # Clear memory periodically
-        if epoch % 100 == 0:
-            tf.keras.backend.clear_session()
-
-    # Save final loss history
-    final_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    with open(f'final_loss_history_{final_time}.csv', 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Epoch', 'Total Loss', 'Power Flow Loss', 'EVCS Loss', 'WAC Loss', 'V Regulation Loss'])
-        for i in range(len(loss_history['total_loss'])):
-            writer.writerow([
-                i,
-                loss_history['total_loss'][i],
-                loss_history['power_flow_loss'][i],
-                loss_history['evcs_loss'][i],
-                loss_history['wac_loss'][i],
-                loss_history['v_regulation_loss'][i]
-            ])
-
-    return model
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user. Saving final state...")
+        manager.save()
+    
+    except Exception as e:
+        print(f"Training error: {e}")
+    
+    finally:
+        # Save final model state
+        manager.save()
+        return model
 
 def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender, num_steps=1500):
     """Evaluate the environment with DQN, SAC attacker, and SAC defender agents."""
