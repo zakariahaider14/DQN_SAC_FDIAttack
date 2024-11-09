@@ -68,9 +68,8 @@ sys.stdout = Logger(log_file)
 
 # import shimmy
 # Check if TensorFlow can see the GPU
-print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
-
-
+print("GPU Available: ", tf.config.list_physical_devices('GPU'))
+print("GPU Device Name: ", tf.test.gpu_device_name())
 
 # System Constants
 NUM_BUSES = 33
@@ -392,7 +391,21 @@ class SACWrapper(gym.Env):
             }
 
     # def decode_dqn_action(self, action):
-    #     """Decode DQN action by delegating to the underlying environment."""
+    #     """Decode DQN action by d    def plot_evaluation_results(results, save_dir="./figures"):
+        # ... other code ...
+    
+        # Plot rewards over time - Fixed version
+        plt.figure(figsize=(12, 6))
+        plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
+        plt.xlabel('Time (s)')
+        plt.ylabel('Rewards from Joint Environment')
+        plt.title('Rewards Over Time')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+        plt.close()
+    
+        # ... rest of the code ...elegating to the underlying environment."""
     #     if hasattr(self.env, 'decode_dqn_action'):
     #         return self.env.decode_dqn_action(action)
     #     elif hasattr(self.env, 'decode_action'):  # Fallback to decode_action if available
@@ -907,7 +920,9 @@ def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender,
             'observations': [],
             'evcs_attack_durations': {i: [] for i in range(env.NUM_EVCS)},
             'attack_counts': {i: 0 for i in range(env.NUM_EVCS)},
-            'total_durations': {i: 0 for i in range(env.NUM_EVCS)}
+            'total_durations': {i: 0 for i in range(env.NUM_EVCS)},
+            'rewards': []
+
         }
 
         for step in range(num_steps):
@@ -958,6 +973,7 @@ def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender,
                 tracking_data['sac_attacker_actions'].append(sac_attacker_action)
                 tracking_data['sac_defender_actions'].append(sac_defender_action)
                 tracking_data['observations'].append(next_state)
+                tracking_data['rewards'].append(rewards)
 
                 # Track EVCS-specific attack data
                 target_evcs = info.get('target_evcs', [0] * env.NUM_EVCS)
@@ -1130,6 +1146,17 @@ def plot_evaluation_results(results, save_dir="./figures"):
     plt.savefig(f"{save_dir}/cumulative_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
     plt.close()
 
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
+    plt.xlabel('Time (s)')
+    plt.ylabel('Rewards from Joint Environment')
+    plt.title('Rewards Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
     # Plot voltage deviations for each EVCS over time
     plt.figure(figsize=(12, 6))
     for i in range(voltage_deviations.shape[1]):
@@ -1162,56 +1189,6 @@ def plot_evaluation_results(results, save_dir="./figures"):
     plt.grid(True)
     plt.savefig(f"{save_dir}/avg_attack_durations_{timestamp}.png", dpi=300, bbox_inches='tight')
     plt.close()
-
-# def plot_evaluation_results(results):
-#     # Extract data from results
-#     time_steps = results['time_steps']
-#     cumulative_deviations = results['cumulative_deviations']
-#     voltage_deviations = np.array(results['voltage_deviations'])
-#     attack_active_states = results['attack_active_states']
-#     avg_attack_durations = results['avg_attack_durations']
-
-#     # Plot cumulative deviations over time
-#     plt.figure(figsize=(12, 6))
-#     plt.plot(time_steps, cumulative_deviations, label='Cumulative Deviations')
-#     plt.xlabel('Time (s)')
-#     plt.ylabel('Cumulative Deviations')
-#     plt.title('Cumulative Deviations Over Time')
-#     plt.legend()
-#     plt.grid(True)
-#     plt.show()
-
-#     # Plot voltage deviations for each EVCS over time
-#     plt.figure(figsize=(12, 6))
-#     for i in range(voltage_deviations.shape[1]):
-#         plt.plot(time_steps, voltage_deviations[:, i], label=f'EVCS {i+1} Voltage Deviation')
-#     plt.xlabel('Time (s)')
-#     plt.ylabel('Voltage Deviation (p.u.)')
-#     plt.title('Voltage Deviations Over Time')
-#     plt.legend()
-#     plt.grid(True)
-#     plt.show()
-
-#     # Plot attack active states over time
-#     plt.figure(figsize=(12, 6))
-#     plt.plot(time_steps, attack_active_states, label='Attack Active State')
-#     plt.xlabel('Time (s)')
-#     plt.ylabel('Attack Active State')
-#     plt.title('Attack Active State Over Time')
-#     plt.legend()
-#     plt.grid(True)
-#     plt.show()
-
-#     # Plot average attack durations for each EVCS
-#     plt.figure(figsize=(12, 6))
-#     plt.bar(range(len(avg_attack_durations)), avg_attack_durations, tick_label=[f'EVCS {i+1}' for i in range(len(avg_attack_durations))])
-#     plt.xlabel('EVCS')
-#     plt.ylabel('Average Attack Duration (s)')
-#     plt.title('Average Attack Duration for Each EVCS')
-#     plt.grid(True)
-#     plt.show()
-
-
 
 
 
@@ -1480,7 +1457,8 @@ if __name__ == '__main__':
                                 for targets in results['target_evcs_history']],
         'attack_durations': results['attack_durations'].tolist(),
         'observations': [obs.tolist() for obs in results['observations']],
-        'avg_attack_durations': results['avg_attack_durations'].tolist()
+        'avg_attack_durations': results['avg_attack_durations'].tolist(),
+        'rewards': results['rewards'].tolist()
     }
 
     # # Save evaluation results

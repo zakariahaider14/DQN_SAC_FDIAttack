@@ -403,16 +403,16 @@ class CompetingHybridEnv(gym.Env):
             self.voltage_deviations = np.abs(self.state[:self.NUM_EVCS] - 1.0)
             max_deviations= np.max(self.voltage_deviations)
 
-            rewards = self.calculate_rewards(self.voltage_deviations)
+            self.rewards = self.calculate_rewards(self.voltage_deviations)
 
             
             # Check if episode is done
             done = self.time_step_counter >= 1000 or max_deviations>= 0.5
             
             # Get info
-            info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration)
+            info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)
             
-            return self.state, rewards, done, False, info
+            return self.state, self.rewards, done, False, info
 
         except Exception as e:
             print(f"Error in step: {e}")
@@ -421,7 +421,7 @@ class CompetingHybridEnv(gym.Env):
                 {'dqn': 0.0, 'attacker': 0.0, 'defender': 0.0},
                 True,
                 False,
-                self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration)
+                self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)
             )
 
     def process_dqn_action(self, dqn_action):
@@ -611,7 +611,7 @@ class CompetingHybridEnv(gym.Env):
             print(f"Error in apply_defender_actions: {e}")
             return state
 
-    def get_info(self, voltage_deviations, target_evcs, attack_duration):
+    def get_info(self, voltage_deviations, target_evcs, attack_duration, rewards):
         """Get current environment info."""
         try:
             # Calculate voltage deviations
@@ -630,7 +630,8 @@ class CompetingHybridEnv(gym.Env):
                 'cumulative_deviation': float(self.cumulative_deviation),
                 'target_evcs': target_evcs.astype(int),
                 'attack_duration': int(attack_duration),
-                'voltage_deviations': self.voltage_deviations
+                'voltage_deviations': self.voltage_deviations,
+                'rewards': rewards
             }
             
         except Exception as e:
@@ -643,6 +644,7 @@ class CompetingHybridEnv(gym.Env):
                 'target_evcs': [0] * self.NUM_EVCS,
                 'attack_duration': 0,
                 'voltage_deviations': [0.0] * self.NUM_EVCS,
+                'rewards': 0.0
             }
 
     
