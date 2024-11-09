@@ -242,6 +242,15 @@ class SACWrapper(gym.Env):
         else:
             self.action_space = env.sac_defender_action_space
 
+    def decode_dqn_action(self, action):
+        """Decode DQN action by delegating to the underlying environment."""
+        if hasattr(self.env, 'decode_dqn_action'):
+            return self.env.decode_dqn_action(action)
+        elif hasattr(self.env, 'decode_action'):  # Fallback to decode_action if available
+            return self.env.decode_action(action)
+        else:
+            raise AttributeError("Neither decode_dqn_action nor decode_action method found in environment")
+
     def step(self, action):
         try:
             # Store current state of tracking variables in case of error
@@ -261,8 +270,8 @@ class SACWrapper(gym.Env):
             dqn_raw = self.dqn_agent.predict(dqn_state, deterministic=True)
             dqn_action = np.asarray(dqn_raw[0] if isinstance(dqn_raw, tuple) else dqn_raw, dtype=np.int32)
             
-            # Process DQN action using env's decode method
-            dqn_action = self.env.decode_dqn_action(dqn_action)
+            # Process DQN action using wrapper's decode method
+            dqn_action = self.decode_dqn_action(dqn_action)  # Updated to use wrapper's method
             
             # Get agent actions
             if self.agent_type == 'attacker':
@@ -381,6 +390,15 @@ class SACWrapper(gym.Env):
                 'target_evcs': self.target_evcs,
                 'attack_duration': self.attack_duration
             }
+
+    # def decode_dqn_action(self, action):
+    #     """Decode DQN action by delegating to the underlying environment."""
+    #     if hasattr(self.env, 'decode_dqn_action'):
+    #         return self.env.decode_dqn_action(action)
+    #     elif hasattr(self.env, 'decode_action'):  # Fallback to decode_action if available
+    #         return self.env.decode_action(action)
+    #     else:
+    #         raise AttributeError("Neither decode_dqn_action nor decode_action method found in environment")
 
 class EVCS_PowerSystem_PINN(tf.keras.Model):
     def __init__(self):
