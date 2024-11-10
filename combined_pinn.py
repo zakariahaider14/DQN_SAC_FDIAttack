@@ -294,7 +294,7 @@ class CompetingHybridEnv(gym.Env):
             attack_reward.append(0)
             defender_reward.append(0)
         
-        print(f"Attack reward: {attack_reward} and Defender reward: {defender_reward}")
+        print(f"Attack reward: {sum(attack_reward)} and Defender reward: {sum(defender_reward)}")
 
         total_reward = sum(attack_reward) + sum(defender_reward)
         
@@ -500,21 +500,21 @@ class CompetingHybridEnv(gym.Env):
         self.attack_duration = dqn_action[-1] * 10
         self.attack_start_time = self.time_step_counter
 
-    def apply_actions(self, dqn_action, sac_attacker_action, sac_defender_action):
-        """Apply all agent actions and return new state."""
-        # Get PINN prediction
-        prediction = self.pinn_model(tf.constant([[self.current_time]], dtype=tf.float32))
-        evcs_vars = prediction[:, 2 * self.NUM_BUSES:].numpy()[0]
-        new_state = self.get_observation(evcs_vars)
+    # def apply_actions(self, dqn_action, sac_attacker_action, sac_defender_action):
+    #     """Apply all agent actions and return new state."""
+    #     # Get PINN prediction
+    #     prediction = self.pinn_model(tf.constant([[self.current_time]], dtype=tf.float32))
+    #     evcs_vars = prediction[:, 2 * self.NUM_BUSES:].numpy()[0]
+    #     new_state = self.get_observation(evcs_vars)
         
-        # Apply attack if active
-        if self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
-            new_state = self.apply_attack_effects(new_state, sac_attacker_action, self.target_evcs, self.attack_duration)
+    #     # Apply attack if active
+    #     if self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
+    #         new_state = self.apply_attack_effects(new_state, sac_attacker_action, self.target_evcs, self.attack_duration)
         
-        # Apply defender actions
-        new_state = self.apply_defender_actions(new_state, sac_defender_action)
+    #     # Apply defender actions
+    #     new_state = self.apply_defender_actions(new_state, sac_defender_action)
         
-        return new_state
+    #     return new_state
 
     def apply_attack_effects(self, state, attacker_action, target_evcs):
         """Apply attacker actions (FDI attacks)."""

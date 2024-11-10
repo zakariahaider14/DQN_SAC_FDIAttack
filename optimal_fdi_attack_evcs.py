@@ -1199,7 +1199,7 @@ if __name__ == '__main__':
         'v_out_nominal': 1.0,
         'current_limits': (-1.0, 1.0),
         'i_rated': 1.0,
-        'attack_magnitude': 0.001,
+        'attack_magnitude': 0.01,
         'current_magnitude': 0.03,
         'wac_kp_limits': (0.0, 2.0),
         'wac_ki_limits': (0.0, 2.0),
@@ -1260,7 +1260,7 @@ if __name__ == '__main__':
     # Train DQN with monitoring
     print("Training DQN agent...")
     dqn_agent.learn(
-        total_timesteps=5000,
+        total_timesteps=10000,
         callback=dqn_checkpoint,
         progress_bar=True
     )
@@ -1349,7 +1349,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=5000,
+        total_timesteps=10000,
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1357,7 +1357,7 @@ if __name__ == '__main__':
 
     print("Training the SAC Defender agent...")
     sac_defender.learn(
-        total_timesteps=1000,
+        total_timesteps=10000,
         callback=sac_defender_checkpoint,
         progress_bar=True
     )
@@ -1377,9 +1377,9 @@ if __name__ == '__main__':
         ]:
             print(f"\nTraining {name}...")
             if name == "SAC Defender":
-                total_timesteps=1000
+                total_timesteps=10000
             else:
-                total_timesteps=5000
+                total_timesteps=10000
             agent.learn(
                 total_timesteps=total_timesteps,
                 callback=callback,
