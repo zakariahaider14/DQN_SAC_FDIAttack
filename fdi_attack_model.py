@@ -7,7 +7,7 @@ import csv
 from datetime import datetime
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 import json
-
+import sys
 
 import matplotlib.pyplot as plt
 import gymnasium as gym
@@ -34,9 +34,30 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 import torch
 torch.set_num_threads(1)
+from datetime import datetime  # Change this line
 
+# ... existing code ...
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+log_file = f"training_log_{current_time}.txt"
 
+# Create a custom logger class
+class Logger(object):
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, 'w', encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+# Redirect stdout to both terminal and file
+sys.stdout = Logger(log_file)
 # import shimmy
 # Check if TensorFlow can see the GPU
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
@@ -665,150 +686,338 @@ def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defen
 
 def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender, num_steps=1500):
     """Evaluate the environment with DQN, SAC attacker, and SAC defender agents."""
-    state, _ = env.reset()
-    done = False
+    try:
+        state, _ = env.reset()
+        done = False
 
-    # Initialize lists to store results for visualization and analysis
-    dqn_actions = []
-    sac_attacker_actions = []
-    sac_defender_actions = []
-    observations = []
-    cumulative_deviations = []
-    time_steps = []
+        # Initialize tracking variables
+        tracking_data = {
+            'time_steps': [],
+            'cumulative_deviations': [],
+            'voltage_deviations': [],
+            'attack_active_states': [],
+            'target_evcs_history': [],
+            'attack_durations': [],
+            'dqn_actions': [],
+            'sac_attacker_actions': [],
+            'sac_defender_actions': [],
+            'observations': [],
+            'evcs_attack_durations': {i: [] for i in range(env.NUM_EVCS)},
+            'attack_counts': {i: 0 for i in range(env.NUM_EVCS)},
+            'total_durations': {i: 0 for i in range(env.NUM_EVCS)},
+            'rewards': []
 
-    # Initialize a counter for the number of attacks on each EVCS
-    evcs_attack_count = np.zeros(env.NUM_EVCS, dtype=int)
-
-    # Initialize a counter for the total duration of attacks on each EVCS
-    evcs_attack_duration = np.zeros(env.NUM_EVCS, dtype=int)
-
-    for step in range(num_steps):
-        if done:
-            break
-
-        # DQN agent selects target EVCS nodes and duration for the attack
-        dqn_action_scalar, _ = dqn_agent.predict(state, deterministic=True)
-        dqn_action = env.decode_dqn_action(dqn_action_scalar)
-
-        # Update the total duration for each targeted EVCS
-        attack_duration = dqn_action[-1]  # Duration is the last element
-        for i, target in enumerate(dqn_action[:-1]):
-            if target == 1:
-                evcs_attack_duration[i] += attack_duration
-
-        # Count the number of attacks on each EVCS
-        for i, target in enumerate(dqn_action[:-1]):
-            if target == 1:
-                evcs_attack_count[i] += 1
-
-        # SAC attacker selects FDI actions
-        sac_attacker_action, _ = sac_attacker.predict(state, deterministic=True)
-
-        # SAC defender selects control actions
-        sac_defender_action, _ = sac_defender.predict(state, deterministic=True)
-        
-        # Combine actions into a single action dictionary
-        action = {
-            'dqn': dqn_action,  # Use the decoded action here
-            'attacker': sac_attacker_action,
-            'defender': sac_defender_action
         }
 
-        # Take a step in the environment
-        next_state, rewards, done, truncated, info = env.step(action)
+        for step in range(num_steps):
 
-        # Store the results
-        dqn_actions.append(dqn_action)
-        sac_attacker_actions.append(sac_attacker_action)
-        sac_defender_actions.append(sac_defender_action)
-        observations.append(next_state)
-        cumulative_deviations.append(info.get('cumulative_deviation', 0.0))
-        time_steps.append(env.current_time)
+            current_time = step * env.TIME_STEP
+            
+            try:
+                # Get and process actions
+                dqn_raw = dqn_agent.predict(state, deterministic=True)
+                dqn_action_scalar = dqn_raw[0] if isinstance(dqn_raw, tuple) else dqn_raw
+                
+                if isinstance(dqn_action_scalar, np.ndarray):
+                    if dqn_action_scalar.ndim == 0:
+                        dqn_action_scalar = int(dqn_action_scalar.item())
+                    elif dqn_action_scalar.size == 1:
+                        dqn_action_scalar = int(dqn_action_scalar[0])
+                
+                dqn_action = env.decode_action(dqn_action_scalar)
+                sac_attacker_action, _ = sac_attacker.predict(state, deterministic=True)
+                sac_defender_action, _ = sac_defender.predict(state, deterministic=True)
+                
+                action = {
+                    'dqn': dqn_action,
+                    'attacker': sac_attacker_action,
+                    'defender': sac_defender_action
+                }
 
-        # Update the state
-        state = next_state
-
-        # Print debug information
-        # print(f"Step {step}: State shape: {state.shape}, DQN action: {dqn_action}, "
-        #       f"SAC attacker action shape: {sac_attacker_action.shape}, "
-        #       f"SAC defender action shape: {sac_defender_action.shape}")
-
-        # if step % 100 == 0:
-        #     print(f"Completed {step} steps")
-
-
-
-    # Convert lists to arrays for easy analysis and visualization
-    dqn_actions = np.array(dqn_actions)
-    sac_attacker_actions = np.array(sac_attacker_actions)
-    sac_defender_actions = np.array(sac_defender_actions)
-
-    if observations:
-        observations = np.vstack(observations)
-        print(f"Observations shape: {observations.shape}")
-    else:
-        print("Warning: No observations were collected during evaluation.")
+                # Take step
+                next_state, rewards, done, truncated, info = env.step(action)
 
 
-    plt.figure(figsize=(18, 18))
+                
+                # # Debug prints
+                # print(f"\nStep {step} (Time: {current_time:.3f}s):")
+                # print(f"DQN Action Scalar: {dqn_action_scalar}, Type: {type(dqn_action_scalar)}")
+                # print(f"Decoded DQN Action: {dqn_action}")
+                # print(f"Target EVCSs: {info.get('target_evcs', [0] * env.NUM_EVCS)}")
+                # print(f"Attack Duration: {info.get('attack_duration', 0)}")
+                
+                # Store data
+                tracking_data['time_steps'].append(current_time)
+                tracking_data['cumulative_deviations'].append(info.get('cumulative_deviation', 0))
+                tracking_data['voltage_deviations'].append(info.get('voltage_deviations', [0] * env.NUM_EVCS))
+                tracking_data['attack_active_states'].append(info.get('attack_active', False))
+                tracking_data['target_evcs_history'].append(info.get('target_evcs', [0] * env.NUM_EVCS))
+                tracking_data['attack_durations'].append(info.get('attack_duration', 0))
+                tracking_data['dqn_actions'].append(dqn_action)
+                tracking_data['sac_attacker_actions'].append(sac_attacker_action)
+                tracking_data['sac_defender_actions'].append(sac_defender_action)
+                tracking_data['observations'].append(next_state)
+                tracking_data['rewards'].append(rewards)
 
-    # Plot cumulative voltage deviation
-    plt.subplot(3, 2, 1)
-    plt.plot(time_steps, cumulative_deviations, label='Cumulative Voltage Deviation')
-    plt.title('Cumulative Voltage Deviation Over Time')
-    plt.xlabel('Time (seconds)')
-    plt.ylabel('Voltage Deviation (V)')
-    plt.axhline(y=80, color='r', linestyle='--', label='Circuit Breaker Trigger Threshold (±80V)')
+                # Track EVCS-specific attack data
+                target_evcs = info.get('target_evcs', [0] * env.NUM_EVCS)
+                attack_duration = info.get('attack_duration', 0)
+                for i in range(env.NUM_EVCS):
+                    if target_evcs[i] == 1:
+                        tracking_data['evcs_attack_durations'][i].append(attack_duration)
+                        tracking_data['attack_counts'][i] += 1
+                        tracking_data['total_durations'][i] += attack_duration
+                
+                state = next_state
+
+                if done:
+                    break
+
+            except Exception as e:
+                print(f"Error in evaluation step {step}: {str(e)}")
+                continue
+
+        # Calculate average attack durations
+        avg_attack_durations = []
+        for i in range(env.NUM_EVCS):
+            if tracking_data['attack_counts'][i] > 0:
+                avg_duration = tracking_data['total_durations'][i] / tracking_data['attack_counts'][i]
+            else:
+                avg_duration = 0
+            avg_attack_durations.append(avg_duration)
+
+        # Convert lists to numpy arrays and add calculated metrics
+        processed_data = {}
+        for key in tracking_data:
+            if isinstance(tracking_data[key], dict):
+                processed_data[key] = tracking_data[key]
+            elif len(tracking_data[key]) > 0:
+                processed_data[key] = np.array(tracking_data[key])
+        
+        processed_data['avg_attack_durations'] = np.array(avg_attack_durations)
+
+        return processed_data
+
+    except Exception as e:
+        print(f"Error in evaluation: {str(e)}")
+        return None
+
+
+def plot_evaluation_results(results, save_dir="./figures"):
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Generate timestamp for unique filenames
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Extract data from results
+    time_steps = results['time_steps']
+    cumulative_deviations = results['cumulative_deviations']
+    voltage_deviations = np.array(results['voltage_deviations'])
+    attack_active_states = results['attack_active_states']
+    avg_attack_durations = results['avg_attack_durations']
+
+    # Plot cumulative deviations over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, cumulative_deviations, label='Cumulative Deviations')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Cumulative Deviations')
+    plt.title('Cumulative Deviations Over Time')
     plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/cumulative_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
-    # Plot EVCS output voltages
-    plt.subplot(3, 2, 2)
-    for i in range(env.NUM_EVCS):
-        plt.plot(observations[:, i], label=f'EVCS {i+1} Output Voltage')
-    plt.title('EVCS Output Voltages During Joint Evaluation')
-    plt.xlabel('Time Step')
-    plt.ylabel('Voltage (V)')
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
+    plt.xlabel('Time (s)')
+    plt.ylabel('Rewards from Joint Environment')
+    plt.title('Rewards Over Time')
     plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
-    # Plot total attack duration on each EVCS as a bar graph
-    plt.subplot(3, 2, 3)
-    plt.bar(range(env.NUM_EVCS), evcs_attack_duration, tick_label=[f'EVCS {i+1}' for i in range(env.NUM_EVCS)])
-    plt.title('Total Attack Duration on Each EVCS')
+
+    # Plot voltage deviations for each EVCS over time
+    plt.figure(figsize=(12, 6))
+    for i in range(voltage_deviations.shape[1]):
+        plt.plot(time_steps, voltage_deviations[:, i], label=f'EVCS {i+1} Voltage Deviation')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Voltage Deviation (p.u.)')
+    plt.title('Voltage Deviations Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/voltage_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot attack active states over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, attack_active_states, label='Attack Active State')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Attack Active State')
+    plt.title('Attack Active State Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/attack_states_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot average attack durations for each EVCS
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(avg_attack_durations)), avg_attack_durations, tick_label=[f'EVCS {i+1}' for i in range(len(avg_attack_durations))])
     plt.xlabel('EVCS')
-    plt.ylabel('Total Duration of Attacks')
+    plt.ylabel('Average Attack Duration (s)')
+    plt.title('Average Attack Duration for Each EVCS')
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/avg_attack_durations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
-    # Plot SAC attacker actions: Voltage and d-axis current attacks
-    plt.subplot(3, 2, 4)
-    for i in range(env.NUM_EVCS * 2):
-        plt.plot(sac_attacker_actions[:, i], label=f'Attacker Action {i+1}')
-    plt.title('SAC Attacker Actions')
-    plt.xlabel('Time Step')
-    plt.ylabel('Action Value')
-    plt.legend()
+# def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender, num_steps=1500):
+#     """Evaluate the environment with DQN, SAC attacker, and SAC defender agents."""
+#     state, _ = env.reset()
+#     done = False
 
-    # Plot SAC defender actions
-    plt.subplot(3, 2, 5)
-    for i in range(env.NUM_EVCS * 2):
-        plt.plot(sac_defender_actions[:, i], label=f'Defender Action {i+1}')
-    plt.title('SAC Defender Actions')
-    plt.xlabel('Time Step')
-    plt.ylabel('Action Value')
-    plt.legend()
+#     # Initialize lists to store results for visualization and analysis
+#     dqn_actions = []
+#     sac_attacker_actions = []
+#     sac_defender_actions = []
+#     observations = []
+#     cumulative_deviations = []
+#     time_steps = []
 
-    plt.tight_layout()
-    plt.show()
+#     # Initialize a counter for the number of attacks on each EVCS
+#     evcs_attack_count = np.zeros(env.NUM_EVCS, dtype=int)
 
-    print("Evaluation completed successfully!")
+#     # Initialize a counter for the total duration of attacks on each EVCS
+#     evcs_attack_duration = np.zeros(env.NUM_EVCS, dtype=int)
 
-    print("Checking DQN agent's policy:")
-    for _ in range(10):
-        random_state = env.observation_space.sample()
-        action, _ = dqn_agent.predict(random_state, deterministic=True)
-        decoded_action = env.decode_dqn_action(action)
-        # print(f"Random state: {random_state}")
-        # print(f"DQN action: {action}")
-        # print(f"Decoded action: {decoded_action}")
-        # print("---")
+#     for step in range(num_steps):
+#         if done:
+#             break
+
+#         # DQN agent selects target EVCS nodes and duration for the attack
+#         dqn_action_scalar, _ = dqn_agent.predict(state, deterministic=True)
+#         dqn_action = env.decode_dqn_action(dqn_action_scalar)
+
+#         # Update the total duration for each targeted EVCS
+#         attack_duration = dqn_action[-1]  # Duration is the last element
+#         for i, target in enumerate(dqn_action[:-1]):
+#             if target == 1:
+#                 evcs_attack_duration[i] += attack_duration
+
+#         # Count the number of attacks on each EVCS
+#         for i, target in enumerate(dqn_action[:-1]):
+#             if target == 1:
+#                 evcs_attack_count[i] += 1
+
+#         # SAC attacker selects FDI actions
+#         sac_attacker_action, _ = sac_attacker.predict(state, deterministic=True)
+
+#         # SAC defender selects control actions
+#         sac_defender_action, _ = sac_defender.predict(state, deterministic=True)
+        
+#         # Combine actions into a single action dictionary
+#         action = {
+#             'dqn': dqn_action,  # Use the decoded action here
+#             'attacker': sac_attacker_action,
+#             'defender': sac_defender_action
+#         }
+
+#         # Take a step in the environment
+#         next_state, rewards, done, truncated, info = env.step(action)
+
+#         # Store the results
+#         dqn_actions.append(dqn_action)
+#         sac_attacker_actions.append(sac_attacker_action)
+#         sac_defender_actions.append(sac_defender_action)
+#         observations.append(next_state)
+#         cumulative_deviations.append(info.get('cumulative_deviation', 0.0))
+#         time_steps.append(env.current_time)
+
+#         # Update the state
+#         state = next_state
+
+#         # Print debug information
+#         # print(f"Step {step}: State shape: {state.shape}, DQN action: {dqn_action}, "
+#         #       f"SAC attacker action shape: {sac_attacker_action.shape}, "
+#         #       f"SAC defender action shape: {sac_defender_action.shape}")
+
+#         # if step % 100 == 0:
+#         #     print(f"Completed {step} steps")
+
+
+
+#     # Convert lists to arrays for easy analysis and visualization
+#     dqn_actions = np.array(dqn_actions)
+#     sac_attacker_actions = np.array(sac_attacker_actions)
+#     sac_defender_actions = np.array(sac_defender_actions)
+
+#     if observations:
+#         observations = np.vstack(observations)
+#         print(f"Observations shape: {observations.shape}")
+#     else:
+#         print("Warning: No observations were collected during evaluation.")
+
+
+#     plt.figure(figsize=(18, 18))
+
+#     # Plot cumulative voltage deviation
+#     plt.subplot(3, 2, 1)
+#     plt.plot(time_steps, cumulative_deviations, label='Cumulative Voltage Deviation')
+#     plt.title('Cumulative Voltage Deviation Over Time')
+#     plt.xlabel('Time (seconds)')
+#     plt.ylabel('Voltage Deviation (V)')
+#     plt.axhline(y=80, color='r', linestyle='--', label='Circuit Breaker Trigger Threshold (±80V)')
+#     plt.legend()
+
+#     # Plot EVCS output voltages
+#     plt.subplot(3, 2, 2)
+#     for i in range(env.NUM_EVCS):
+#         plt.plot(observations[:, i], label=f'EVCS {i+1} Output Voltage')
+#     plt.title('EVCS Output Voltages During Joint Evaluation')
+#     plt.xlabel('Time Step')
+#     plt.ylabel('Voltage (V)')
+#     plt.legend()
+
+#     # Plot total attack duration on each EVCS as a bar graph
+#     plt.subplot(3, 2, 3)
+#     plt.bar(range(env.NUM_EVCS), evcs_attack_duration, tick_label=[f'EVCS {i+1}' for i in range(env.NUM_EVCS)])
+#     plt.title('Total Attack Duration on Each EVCS')
+#     plt.xlabel('EVCS')
+#     plt.ylabel('Total Duration of Attacks')
+
+#     # Plot SAC attacker actions: Voltage and d-axis current attacks
+#     plt.subplot(3, 2, 4)
+#     for i in range(env.NUM_EVCS * 2):
+#         plt.plot(sac_attacker_actions[:, i], label=f'Attacker Action {i+1}')
+#     plt.title('SAC Attacker Actions')
+#     plt.xlabel('Time Step')
+#     plt.ylabel('Action Value')
+#     plt.legend()
+
+#     # Plot SAC defender actions
+#     plt.subplot(3, 2, 5)
+#     for i in range(env.NUM_EVCS * 2):
+#         plt.plot(sac_defender_actions[:, i], label=f'Defender Action {i+1}')
+#     plt.title('SAC Defender Actions')
+#     plt.xlabel('Time Step')
+#     plt.ylabel('Action Value')
+#     plt.legend()
+
+#     plt.tight_layout()
+#     plt.show()
+
+#     print("Evaluation completed successfully!")
+
+#     print("Checking DQN agent's policy:")
+#     for _ in range(10):
+#         random_state = env.observation_space.sample()
+#         action, _ = dqn_agent.predict(random_state, deterministic=True)
+#         decoded_action = env.decode_dqn_action(action)
+#         # print(f"Random state: {random_state}")
+#         # print(f"DQN action: {action}")
+#         # print(f"Decoded action: {decoded_action}")
+#         # print("---")
 
     
 
@@ -1019,7 +1228,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=50000,
+        total_timesteps=5000,
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1027,7 +1236,7 @@ if __name__ == '__main__':
 
     print("Training the SAC Defender agent...")
     sac_defender.learn(
-        total_timesteps=50000,
+        total_timesteps=5000,
         callback=sac_defender_checkpoint,
         progress_bar=True
     )
@@ -1064,9 +1273,9 @@ if __name__ == '__main__':
         
         # Train agents with different timesteps
         training_config = [
-            (dqn_agent, "DQN", dqn_checkpoint, discrete_env, 50000),
-            (sac_attacker, "SAC Attacker", sac_attacker_checkpoint, sac_attacker_env, 50000),
-            (sac_defender, "SAC Defender", sac_defender_checkpoint, sac_defender_env, 25000)  # Reduced timesteps
+            (dqn_agent, "DQN", dqn_checkpoint, discrete_env, 5000),
+            (sac_attacker, "SAC Attacker", sac_attacker_checkpoint, sac_attacker_env, 5000),
+            (sac_defender, "SAC Defender", sac_defender_checkpoint, sac_defender_env, 2500)  # Reduced timesteps
         ]
         
         for agent, name, callback, env, timesteps in training_config:
@@ -1137,10 +1346,36 @@ if __name__ == '__main__':
         num_steps=1000
     )
 
-    # Save evaluation results
+
+
+        # Convert NumPy arrays to lists before saving
+    serializable_results = {
+        'time_steps': results['time_steps'].tolist(),
+        'cumulative_deviations': results['cumulative_deviations'].tolist(),
+        'voltage_deviations': [vd.tolist() for vd in results['voltage_deviations']],
+        'attack_active_states': results['attack_active_states'].tolist(),
+        'target_evcs_history': [targets.tolist() if isinstance(targets, np.ndarray) else targets 
+                                for targets in results['target_evcs_history']],
+        'attack_durations': results['attack_durations'].tolist(),
+        'observations': [obs.tolist() for obs in results['observations']],
+        'avg_attack_durations': results['avg_attack_durations'].tolist(),
+        'rewards': results['rewards'].tolist()
+    }
+
+    # # Save evaluation results
+    # with open(f"{log_dir}/final_evaluation_results.json", "w") as f:
+    #     json.dump(serializable_results, f, indent=4)
+
+    # Assuming 'results' is the dictionary returned from evaluate_model_with_three_agents
+    plot_evaluation_results(serializable_results)
+
+    print("\nTraining completed successfully!")
+
+
+    # # Save evaluation results
    
-    with open(f"{log_dir}/final_evaluation_results.json", "w") as f:
-        json.dump(results, f, indent=4)
+    # with open(f"{log_dir}/final_evaluation_results.json", "w") as f:
+    #     json.dump(results, f, indent=4)
 
     print("\nTraining completed successfully!")
 

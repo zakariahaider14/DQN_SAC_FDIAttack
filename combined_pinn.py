@@ -536,12 +536,12 @@ class CompetingHybridEnv(gym.Env):
             for i in range(self.NUM_EVCS):
                 if target_evcs[i] == 1:  # Check if this EVCS is targeted
                     # Apply voltage FDI
-                    state[i] += np.clip(v_fdi[i], -0.001, 0.001)
+                    state[i] += np.clip(v_fdi[i], -0.01, 0.01)
                     # Apply current FDI
                     state[3*self.NUM_EVCS + i] += np.clip(
                         i_fdi[i],
-                        -0.001,
-                         0.001
+                        -0.01,
+                         0.01
                     )
                 
             return state

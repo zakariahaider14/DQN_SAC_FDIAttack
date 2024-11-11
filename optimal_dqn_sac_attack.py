@@ -527,42 +527,100 @@ def safe_op(x):
         return tf.where(tf.math.is_finite(dy), dy, tf.zeros_like(dy) + 1e-30)  # Add a small value instead of zeros
     return y, grad
 
+@tf.function
 def safe_matrix_operations(func):
     """Decorator for safe matrix operations with logging"""
     def wrapper(*args, **kwargs):
         try:
             result = func(*args, **kwargs)
-            if tf.reduce_any(tf.math.is_nan(result)):
-                print(f"Warning: NaN detected in {func.__name__}")
-                # Log the error and input shapes
-                print(f"Input shapes: {[tf.shape(arg) for arg in args]}")
-                return tf.zeros_like(result)
-            return result
+            # Handle tuple return type properly
+            if isinstance(result, tuple):
+                nan_check = tf.reduce_any([tf.reduce_any(tf.math.is_nan(r)) for r in result])
+                if nan_check:
+                    tf.print(f"Warning: NaN detected in {func.__name__}")
+                    tf.print(f"Input shapes: {[tf.shape(arg) for arg in args]}")
+                    return tuple(tf.zeros_like(r) for r in result)
+                return result
+            else:
+                if tf.reduce_any(tf.math.is_nan(result)):
+                    tf.print(f"Warning: NaN detected in {func.__name__}")
+                    tf.print(f"Input shapes: {[tf.shape(arg) for arg in args]}")
+                    return tf.zeros_like(result)
+                return result
         except Exception as e:
-            print(f"Error in {func.__name__}: {str(e)}")
-            raise
+            tf.print(f"Error in {func.__name__}: {str(e)}")
+            batch_size = tf.shape(args[0])[0]
+            num_buses = tf.shape(args[0])[1]
+            return (tf.zeros([batch_size, num_buses]), tf.zeros([batch_size, num_buses]))
     return wrapper
 
-@safe_matrix_operations
-def calculate_power_flow(v_d, v_q, G_d, G_q):
-    """Safely calculate power flow components with corrected dimensions"""
-    # Reshape voltage vectors for batch matrix multiplication
-    # v_d shape: [batch_size, num_buses] -> [batch_size, num_buses, 1]
-    v_d_expanded = tf.expand_dims(v_d, axis=-1)
-    v_q_expanded = tf.expand_dims(v_q, axis=-1)
-    
+@tf.function
+def calculate_power_flow(v_d, v_q, G_d, G_q, B_d, B_q, bus_type="PCC"):
+    """Calculate active and reactive power flows with proper shape handling"""
+    # Ensure tensors are in the correct shape and data type
+    v_d = tf.cast(v_d, tf.float32)
+    v_q = tf.cast(v_q, tf.float32)
+    G_d = tf.cast(G_d, tf.float32)
+    G_q = tf.cast(G_q, tf.float32)
+    B_d = tf.cast(B_d, tf.float32)
+    B_q = tf.cast(B_q, tf.float32)
+
+    # Get shapes
+    batch_size = tf.shape(v_d)[0]
+    num_buses = tf.shape(v_d)[1]
+
+    # Expand dimensions for matrix multiplication
+    v_d_expanded = tf.expand_dims(v_d, -1)  # Shape: [batch_size, num_buses, 1]
+    v_q_expanded = tf.expand_dims(v_q, -1)  # Shape: [batch_size, num_buses, 1]
+
+    # Handle batch dimension for admittance matrices
+    G_d_batch = tf.cond(
+        tf.equal(tf.rank(G_d), 2),
+        lambda: tf.tile(tf.expand_dims(G_d, 0), [batch_size, 1, 1]),
+        lambda: G_d
+    )
+    G_q_batch = tf.cond(
+        tf.equal(tf.rank(G_q), 2),
+        lambda: tf.tile(tf.expand_dims(G_q, 0), [batch_size, 1, 1]),
+        lambda: G_q
+    )
+    B_d_batch = tf.cond(
+        tf.equal(tf.rank(B_d), 2),
+        lambda: tf.tile(tf.expand_dims(B_d, 0), [batch_size, 1, 1]),
+        lambda: B_d
+    )
+    B_q_batch = tf.cond(
+        tf.equal(tf.rank(B_q), 2),
+        lambda: tf.tile(tf.expand_dims(B_q, 0), [batch_size, 1, 1]),
+        lambda: B_q
+    )
+
     # Calculate power components
-    # First term: v_d * G_d * v_d
-    P_dd = tf.matmul(tf.matmul(v_d_expanded, G_d, transpose_a=True), v_d_expanded)
-    # Second term: v_q * G_q * v_q
-    P_qq = tf.matmul(tf.matmul(v_q_expanded, G_q, transpose_a=True), v_q_expanded)
-    
-    # Combine terms and apply scaling
-    return (3 / 2) * tf.squeeze(P_dd + P_qq)
+    P_g = (3.0 / 2.0) * tf.squeeze(
+        tf.matmul(tf.matmul(tf.transpose(v_d_expanded, [0, 2, 1]), G_d_batch), v_d_expanded) +
+        tf.matmul(tf.matmul(tf.transpose(v_q_expanded, [0, 2, 1]), G_q_batch), v_q_expanded),
+        axis=-1
+    )
+    Q_g = (3.0 / 2.0) * tf.squeeze(
+        tf.matmul(tf.matmul(tf.transpose(v_q_expanded, [0, 2, 1]), B_d_batch), v_d_expanded) -
+        tf.matmul(tf.matmul(tf.transpose(v_d_expanded, [0, 2, 1]), B_q_batch), v_q_expanded),
+        axis=-1
+    )
+
+    # Handle NaN/Inf values
+    epsilon = 1e-10
+    P_g = tf.where(tf.math.is_finite(P_g), P_g, epsilon * tf.ones_like(P_g))
+    Q_g = tf.where(tf.math.is_finite(Q_g), Q_g, epsilon * tf.ones_like(Q_g))
+
+    # Clip values
+    P_g = tf.clip_by_value(P_g, -1e6, 1e6)
+    Q_g = tf.clip_by_value(Q_g, -1e6, 1e6)
+
+    return P_g, Q_g
 
 def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
-    """Modified physics loss function with corrected power flow calculations"""
-    with tf.GradientTape(persistent=True) as tape:
+    """Modified physics loss function with improved tensor handling and power balance."""
+    with tf.GradientTape(persistent=True) as tape:  # Changed to non-persistent
         tape.watch(t)
         predictions = model(t)
 
@@ -608,10 +666,6 @@ def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
         G_q_batch = tf.tile(tf.expand_dims(G_q, 0), [batch_size, 1, 1])
         B_d_batch = tf.tile(tf.expand_dims(B_d, 0), [batch_size, 1, 1])
         B_q_batch = tf.tile(tf.expand_dims(B_q, 0), [batch_size, 1, 1])
-
-        # Initial power calculations using safe_matrix_operations
-        P_g = calculate_power_flow(v_d, v_q, G_d_batch, G_q_batch)
-        Q_g = calculate_power_flow(v_q, v_d, B_d_batch, B_q_batch)
 
         # Voltage regulation loss
         V_lower, V_upper = 0.85, 1.15
@@ -734,36 +788,24 @@ def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
                               dv_c_dt_loss, dv_dc_dt_loss, v_out_loss, di_out_dt_loss,
                               dsoc_dt_loss, power_balance_loss, current_consistency_loss])
 
-        # After EVCS loop, update power balance calculations
-        # Power balance at PCC (bus 1 with constant power source)
-        P_g = calculate_power_flow(v_d, v_q, G_d_batch, G_q_batch)
-        Q_g = calculate_power_flow(v_q, v_d, B_d_batch, B_q_batch)
+        # Calculate power balance for each bus type
+        P_g_pcc, Q_g_pcc = calculate_power_flow(v_d, v_q, G_d_batch, G_q_batch, B_d_batch, B_q_batch, bus_type="PCC")
+        P_g_load, Q_g_load = calculate_power_flow(v_d * non_evcs_mask, v_q * non_evcs_mask, G_d_batch, G_q_batch, B_d_batch, B_q_batch, bus_type="LOAD")
+        P_g_ev_load, Q_g_ev_load = calculate_power_flow(v_d, v_q, G_d_batch, G_q_batch, B_d_batch, B_q_batch, bus_type="EV_LOAD")
 
-        # Power balance for load nodes (EVCS and non-EVCS buses)
-        # Reshape tensors for matrix multiplication
-        v_d_h_expanded = tf.expand_dims(v_d * non_evcs_mask, 2)  # [batch_size, NUM_BUSES, 1]
-        v_q_h_expanded = tf.expand_dims(v_q * non_evcs_mask, 2)  # [batch_size, NUM_BUSES, 1]
-        
-        P_L_plus_P_E = calculate_power_flow(
-            v_d_h_expanded[:, :, 0],  # Remove last dimension
-            v_q_h_expanded[:, :, 0],  # Remove last dimension
-            G_d_batch,
-            G_q_batch
-        )
-        
-        Q_L_plus_Q_E = calculate_power_flow(
-            v_q_h_expanded[:, :, 0],  # Remove last dimension
-            v_d_h_expanded[:, :, 0],  # Remove last dimension
-            B_d_batch,
-            B_q_batch
-        )
+        # Assuming shapes [batch_size, num_buses]
+        P_mismatch = P_g_pcc - (P_g_load + P_g_ev_load)
+        Q_mismatch = Q_g_pcc - (Q_g_load + Q_g_ev_load)
 
-        # Power consumed by EVs
-        P_E = (3 / 2) * (v_d * i_d + v_q * i_q)
-        Q_E = (3 / 2) * (v_q * i_d - v_d * i_q)
+        # If you want a single mismatch value per batch (e.g., summing across buses)
+        P_mismatch = tf.reduce_sum(P_mismatch, axis=1)  # Shape [batch_size]
+        Q_mismatch = tf.reduce_sum(Q_mismatch, axis=1)  # Shape [batch_size]
+
+        # If calculating the loss, you might reduce further across the batch
+        power_flow_loss = tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch))
 
         # Final loss calculations
-        power_flow_loss = safe_op(tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch)))
+        # power_flow_loss = safe_op(tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch)))
         evcs_total_loss = safe_op(tf.reduce_sum(evcs_loss))
         wac_loss = safe_op(tf.reduce_mean(tf.square(wac_error_vdc) + tf.square(wac_error_vout)))
         V_regulation_loss = safe_op(tf.reduce_mean(V_regulation_loss))
@@ -784,56 +826,54 @@ def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
 
 @tf.function
 def train_step(model, optimizer, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
-    """Optimized training step with improved error handling and interruption management"""
-    try:
-        with tf.GradientTape() as tape:
-            # Use gradient accumulation for large batches
-            total_loss = 0
-            for mini_batch in tf.data.Dataset.from_tensor_slices(
-                (t, attack_actions, defend_actions)).batch(32):
-                t_batch, attack_batch, defend_batch = mini_batch
-                batch_loss = physics_loss(
-                    model, t_batch, Y_bus_tf, bus_data, 
-                    attack_batch, defend_batch
-                )[0]
-                total_loss += batch_loss / tf.cast(tf.shape(t)[0], tf.float32)
+    """Modified training step with proper tensor handling"""
+    with tf.GradientTape() as tape:
+        total_loss, power_flow_loss, evcs_loss, wac_loss, v_reg_loss = physics_loss(
+            model, t, Y_bus_tf, bus_data, attack_actions, defend_actions
+        )
+        
+        # Calculate L2 regularization only for non-None variables
+        l2_losses = []
+        for v in model.trainable_variables:
+            if v is not None:
+                l2_losses.append(tf.nn.l2_loss(v))
+        
+        if l2_losses:  # Only add L2 loss if there are valid variables
+            l2_loss = tf.add_n(l2_losses) * 1e-5
+            total_loss += l2_loss
+        else:
+            l2_loss = tf.constant(0.0)
 
-        # Compute and apply gradients with error checking
-        gradients = tape.gradient(total_loss, model.trainable_variables)
-        
-        # Check for valid gradients before applying
-        valid_gradients = []
-        for grad in gradients:
-            if grad is not None and not tf.reduce_any(tf.math.is_nan(grad)):
-                valid_gradients.append(grad)
-            else:
-                valid_gradients.append(tf.zeros_like(model.trainable_variables[len(valid_gradients)]))
-        
-        optimizer.apply_gradients(zip(valid_gradients, model.trainable_variables))
-        
-        # Clear memory
-        tf.keras.backend.clear_session()
-        return total_loss
-        
-    except KeyboardInterrupt:
-        print("\nTraining interrupted by user. Saving current state...")
-        return None
-        
-    except Exception as e:
-        print(f"Error in training step: {e}")
-        return None
+    # Calculate gradients
+    gradients = tape.gradient(total_loss, model.trainable_variables)
+    
+    # Process gradients
+    processed_gradients = []
+    for grad, var in zip(gradients, model.trainable_variables):
+        if grad is not None:
+            # Replace NaN/Inf with zeros
+            grad = tf.where(tf.math.is_finite(grad), grad, tf.zeros_like(grad))
+            # Clip gradients
+            grad = tf.clip_by_norm(grad, 1.0)
+            processed_gradients.append((grad, var))
+        else:
+            tf.print(f"Warning: Gradient is None for variable {var.name}")
+            processed_gradients.append((tf.zeros_like(var), var))
+
+    # Apply gradients if any are valid
+    if processed_gradients:
+        optimizer.apply_gradients(processed_gradients)
+
+    return total_loss, power_flow_loss, evcs_loss, wac_loss, v_reg_loss
 
 def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defender=None, epochs=2500, batch_size=64):
     """Modified training function with improved error handling and checkpointing"""
-    # Initialize the PINN model if not provided
-    initialize_conductance_matrices()
-
     if initial_model is None:
         model = EVCS_PowerSystem_PINN()
     else:
         model = initial_model
 
-    # Define the optimizer with a learning rate schedule
+    # Define optimizer with learning rate schedule
     initial_learning_rate = 1e-3
     lr_schedule = CosineDecay(
         initial_learning_rate,
@@ -842,30 +882,57 @@ def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defen
     )
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    # Create checkpoint manager
+    # Create environment
+    env = CompetingHybridEnv(
+        pinn_model=model,
+        y_bus_tf=Y_bus_tf,
+        bus_data=bus_data,
+        v_base_lv=V_BASE_DC,
+        dqn_agent=dqn_agent,
+        num_evcs=NUM_EVCS,
+        num_buses=NUM_BUSES,
+        time_step=TIME_STEP
+    )
+
+    # Setup checkpointing
     checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
     checkpoint_dir = './training_checkpoints'
     manager = tf.train.CheckpointManager(checkpoint, checkpoint_dir, max_to_keep=3)
 
     try:
-        # Training loop with checkpointing
         for epoch in range(epochs):
             try:
-                # Get state and actions from environment
+                # Reset environment and get initial state
                 state = env.reset()[0]
                 
-                # Get actions from all agents
+                # Get actions from agents
                 if all([dqn_agent, sac_attacker, sac_defender]):
-                    dqn_action, _ = dqn_agent.predict(state)
-                    dqn_decoded = env.decode_dqn_action(dqn_action)
-                    attack_actions, _ = sac_attacker.predict(state)
-                    defend_actions, _ = sac_defender.predict(state)
+                    # Get DQN action and decode it properly
+                    dqn_action_scalar = dqn_agent.predict(state.reshape(1, -1), deterministic=True)[0]
+                    try:
+                        dqn_action = env.decode_action(dqn_action_scalar)
+                    except Exception as e:
+                        print(f"Error decoding DQN action: {e}")
+                        print(f"Action scalar: {dqn_action_scalar}, Type: {type(dqn_action_scalar)}")
+                        dqn_action = np.zeros(NUM_EVCS, dtype=np.int32)
+                    
+                    # Get SAC actions
+                    attack_actions = sac_attacker.predict(state, deterministic=True)[0]
+                    defend_actions = sac_defender.predict(state, deterministic=True)[0]
+                    
+                    # Reshape actions to match expected dimensions
+                    attack_actions = np.tile(attack_actions.reshape(1, -1), (batch_size, 1))
+                    defend_actions = np.tile(defend_actions.reshape(1, -1), (batch_size, 1))
                 else:
-                    attack_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
-                    defend_actions = tf.zeros((batch_size, NUM_EVCS * 2), dtype=tf.float32)
+                    attack_actions = np.zeros((batch_size, NUM_EVCS * 2), dtype=np.float32)
+                    defend_actions = np.zeros((batch_size, NUM_EVCS * 2), dtype=np.float32)
 
-                # Create batched time points
+                # Create time batch
                 t_batch = tf.random.uniform((batch_size, 1), minval=0, maxval=TOTAL_TIME)
+                
+                # Convert actions to tensors
+                attack_actions = tf.convert_to_tensor(attack_actions, dtype=tf.float32)
+                defend_actions = tf.convert_to_tensor(defend_actions, dtype=tf.float32)
                 
                 # Training step
                 loss = train_step(
@@ -873,16 +940,11 @@ def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defen
                     tf.constant(bus_data, dtype=tf.float32),
                     attack_actions, defend_actions
                 )
-                
-                if loss is None:  # Training step failed or was interrupted
-                    print("Saving checkpoint due to interruption...")
-                    manager.save()
-                    break
 
-                # Save checkpoint periodically
+                # Periodic logging and checkpointing
                 if epoch % 100 == 0:
                     manager.save()
-                    print(f"Epoch {epoch}: Loss = {loss:.6f}")
+                    print(f"Epoch {epoch}: Loss = {float(loss):.6f}")  # Convert to float
 
             except Exception as e:
                 print(f"Error in epoch {epoch}: {e}")
@@ -892,11 +954,7 @@ def train_model(initial_model=None, dqn_agent=None, sac_attacker=None, sac_defen
         print("\nTraining interrupted by user. Saving final state...")
         manager.save()
     
-    except Exception as e:
-        print(f"Training error: {e}")
-    
     finally:
-        # Save final model state
         manager.save()
         return model
 
@@ -1121,6 +1179,8 @@ def validate_physics_constraints(env, dqn_agent, sac_attacker, sac_defender, num
     return True
 
 
+
+
 def plot_evaluation_results(results, save_dir="./figures"):
     # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
@@ -1155,6 +1215,7 @@ def plot_evaluation_results(results, save_dir="./figures"):
     plt.grid(True)
     plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
     plt.close()
+
 
 
     # Plot voltage deviations for each EVCS over time
@@ -1260,7 +1321,7 @@ if __name__ == '__main__':
     # Train DQN with monitoring
     print("Training DQN agent...")
     dqn_agent.learn(
-        total_timesteps=5000,
+        total_timesteps=1000,
         callback=dqn_checkpoint,
         progress_bar=True
     )
@@ -1349,7 +1410,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=5000,
+        total_timesteps=1000,
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1357,7 +1418,7 @@ if __name__ == '__main__':
 
     print("Training the SAC Defender agent...")
     sac_defender.learn(
-        total_timesteps=5000,
+        total_timesteps=1000,
         callback=sac_defender_checkpoint,
         progress_bar=True
     )
@@ -1377,9 +1438,9 @@ if __name__ == '__main__':
         ]:
             print(f"\nTraining {name}...")
             if name == "SAC Defender":
-                total_timesteps=2500
+                total_timesteps=1000
             else:
-                total_timesteps=2500
+                total_timesteps=1000
             agent.learn(
                 total_timesteps=total_timesteps,
                 callback=callback,
@@ -1430,8 +1491,6 @@ if __name__ == '__main__':
         time_step=TIME_STEP
     )
 
-
-
         # Update the environment's agent references if necessary
     trained_combined_env.sac_attacker = sac_attacker
     trained_combined_env.sac_defender = sac_defender
@@ -1460,10 +1519,6 @@ if __name__ == '__main__':
         'avg_attack_durations': results['avg_attack_durations'].tolist(),
         'rewards': results['rewards'].tolist()
     }
-
-    # # Save evaluation results
-    # with open(f"{log_dir}/final_evaluation_results.json", "w") as f:
-    #     json.dump(serializable_results, f, indent=4)
 
     # Assuming 'results' is the dictionary returned from evaluate_model_with_three_agents
     plot_evaluation_results(serializable_results)
