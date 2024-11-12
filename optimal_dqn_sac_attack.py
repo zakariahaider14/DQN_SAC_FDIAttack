@@ -202,10 +202,10 @@ def initialize_conductance_matrices():
     G_q = tf.cast(tf.math.real(Y_bus_tf), dtype=tf.float32)  # Real part for q-axis
     B_d = tf.cast(tf.math.imag(Y_bus_tf), dtype=tf.float32)  # Imaginary part for d-axis
     B_q = tf.cast(tf.math.imag(Y_bus_tf), dtype=tf.float32)  # Imaginary part for q-axis
-    return G_d, G_q
+    return G_d, G_q, B_d, B_q
 
 # Call this function before training starts
-G_d, G_q = initialize_conductance_matrices()
+G_d, G_q, B_d, B_q = initialize_conductance_matrices()
 
 # For individual elements (if needed)
 G_d_kh = tf.linalg.diag_part(G_d)  # Diagonal elements for d-axis conductance
@@ -330,7 +330,7 @@ class SACWrapper(gym.Env):
                 'error': str(e)
             }
         
-    def update_agents(self, dqn_agent=None, sac_defender=None, sac_attacker=None):
+    def update_agents(self, dqn_agent= None, sac_defender=None, sac_attacker= None):
         """Update the agents used by the wrapper."""
         if dqn_agent is not None:
             self.dqn_agent = dqn_agent
@@ -394,16 +394,16 @@ class SACWrapper(gym.Env):
     #     """Decode DQN action by d    def plot_evaluation_results(results, save_dir="./figures"):
         # ... other code ...
     
-        # Plot rewards over time - Fixed version
-        plt.figure(figsize=(12, 6))
-        plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
-        plt.xlabel('Time (s)')
-        plt.ylabel('Rewards from Joint Environment')
-        plt.title('Rewards Over Time')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        # # Plot rewards over time - Fixed version
+        # plt.figure(figsize=(12, 6))
+        # plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Rewards from Joint Environment')
+        # plt.title('Rewards Over Time')
+        # plt.legend()
+        # plt.grid(True)
+        # plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+        # plt.close()
     
         # ... rest of the code ...elegating to the underlying environment."""
     #     if hasattr(self.env, 'decode_dqn_action'):
@@ -577,23 +577,24 @@ def calculate_power_flow(v_d, v_q, G_d, G_q, B_d, B_q, bus_type="PCC"):
     G_d_batch = tf.cond(
         tf.equal(tf.rank(G_d), 2),
         lambda: tf.tile(tf.expand_dims(G_d, 0), [batch_size, 1, 1]),
-        lambda: G_d
+        lambda: tf.identity(G_d)
     )
     G_q_batch = tf.cond(
         tf.equal(tf.rank(G_q), 2),
         lambda: tf.tile(tf.expand_dims(G_q, 0), [batch_size, 1, 1]),
-        lambda: G_q
+        lambda: tf.identity(G_q)
     )
     B_d_batch = tf.cond(
         tf.equal(tf.rank(B_d), 2),
         lambda: tf.tile(tf.expand_dims(B_d, 0), [batch_size, 1, 1]),
-        lambda: B_d
+        lambda: tf.identity(B_d)
     )
     B_q_batch = tf.cond(
         tf.equal(tf.rank(B_q), 2),
         lambda: tf.tile(tf.expand_dims(B_q, 0), [batch_size, 1, 1]),
-        lambda: B_q
+        lambda: tf.identity(B_q)
     )
+
 
     # Calculate power components
     P_g = (3.0 / 2.0) * tf.squeeze(
@@ -797,18 +798,28 @@ def physics_loss(model, t, Y_bus_tf, bus_data, attack_actions, defend_actions):
         P_mismatch = P_g_pcc - (P_g_load + P_g_ev_load)
         Q_mismatch = Q_g_pcc - (Q_g_load + Q_g_ev_load)
 
+        print(f'P_mismatch: {P_mismatch} and Q_mismatch: {Q_mismatch}')
+
         # If you want a single mismatch value per batch (e.g., summing across buses)
         P_mismatch = tf.reduce_sum(P_mismatch, axis=1)  # Shape [batch_size]
         Q_mismatch = tf.reduce_sum(Q_mismatch, axis=1)  # Shape [batch_size]
 
+        print(f'P_mismatch: {P_mismatch} and Q_mismatch: {Q_mismatch}')
+
+
         # If calculating the loss, you might reduce further across the batch
-        power_flow_loss = tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch))
+        power_flow_loss = safe_op(tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch)))
+
+        print(f'Power Flow Loss: {power_flow_loss}')
+
 
         # Final loss calculations
         # power_flow_loss = safe_op(tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch)))
         evcs_total_loss = safe_op(tf.reduce_sum(evcs_loss))
         wac_loss = safe_op(tf.reduce_mean(tf.square(wac_error_vdc) + tf.square(wac_error_vout)))
         V_regulation_loss = safe_op(tf.reduce_mean(V_regulation_loss))
+
+        print(f'Total Power Loss: {power_flow_loss} EVCS Loss: {evcs_total_loss}, WAC Loss : {wac_loss} and V_loss: {V_regulation_loss}')
 
         total_loss = power_flow_loss + evcs_total_loss + wac_loss + V_regulation_loss
 
