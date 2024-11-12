@@ -301,10 +301,10 @@ class CompetingHybridEnv(gym.Env):
             if self.target_evcs[i] == 1:  # Only consider targeted EVCSs
                 if deviation > 0.5:
                     attack_reward.append(100 - 0.1 * self.current_time)
-                    defender_reward.append(-0.1 * self.current_time - 10*deviation)
+                    defender_reward.append(-0.1 * self.current_time - 1*deviation)
                 else:
-                    attack_reward.append(-0.1 * self.current_time + deviation)
-                    defender_reward.append(0.01 * self.current_time)
+                    attack_reward.append(0.1 * self.current_time + deviation)
+                    defender_reward.append(-0.01 * self.current_time)
         else:
             attack_reward.append(0)
             defender_reward.append(0)
