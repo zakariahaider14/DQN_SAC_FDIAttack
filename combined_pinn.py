@@ -202,30 +202,45 @@ class CompetingHybridEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         """Reset the environment to initial state."""
-        # Set seed if provided
-        if seed is not None:
-            np.random.seed(seed)
+        try:
+            # Reset time counter
+            self.time_step_counter = 0
+            self.current_time = 0.0
             
-        # Reset state variables
-        self.state = np.zeros(self.observation_space.shape[0], dtype=np.float32)
-        
-        # Reset tracking variables
-        self.voltage_deviations = np.zeros(self.NUM_EVCS, dtype=np.float32)
-        self.cumulative_deviation = 0.0
-        self.attack_active = False
-        self.target_evcs = np.zeros(self.NUM_EVCS)
-        self.attack_duration = 0.0
-        self.time_step_counter=0
-
-        
-        # Return observation and info dict
-        return self.state, {
-            'voltage_deviations': self.voltage_deviations,
-            'cumulative_deviation': self.cumulative_deviation,
-            'attack_active': self.attack_active,
-            'target_evcs': self.target_evcs,
-            'attack_duration': self.attack_duration
-        }
+            # Reset attack parameters
+            self.target_evcs = np.zeros(self.NUM_EVCS, dtype=np.int32)
+            self.attack_duration = 0
+            self.attack_start_time = 0
+            self.attack_end_time = 0
+            
+            # Reset WAC parameters
+            self.kp_vout = np.full(self.NUM_EVCS, self.WAC_KP_VOUT_DEFAULT)
+            self.ki_vout = np.full(self.NUM_EVCS, self.WAC_KI_VOUT_DEFAULT)
+            
+            # Get initial state from PINN model
+            initial_prediction = self.pinn_model(tf.constant([[0.0]], dtype=tf.float32))
+            if initial_prediction is None:
+                print("Error: Initial prediction is None")
+                return np.zeros(self.observation_space.shape[0]), {}
+                
+            evcs_vars = initial_prediction[:, 2 * self.NUM_BUSES:].numpy()[0]
+            initial_state = self.get_observation(evcs_vars)
+            
+            # Super call if needed
+            if hasattr(super(), 'reset'):
+                super().reset(seed=seed)
+            
+            # Set random seed if provided
+            if seed is not None:
+                np.random.seed(seed)
+                tf.random.set_seed(seed)
+            
+            return initial_state, {}  # Return state and empty info dict
+            
+        except Exception as e:
+            print(f"Error in environment reset: {str(e)}")
+            # Return zero state and empty info dict as fallback
+            return np.zeros(self.observation_space.shape[0]), {}
 
     def apply_wac_control(self):
         """Apply Wide Area Control with anti-windup protection."""
@@ -286,13 +301,15 @@ class CompetingHybridEnv(gym.Env):
             if self.target_evcs[i] == 1:  # Only consider targeted EVCSs
                 if deviation > 0.5:
                     attack_reward.append(100 - 0.1 * self.current_time)
-                    defender_reward.append(-0.1 * self.current_time - deviation)
+                    defender_reward.append(-0.01 * self.current_time - 10*deviation)
                 else:
                     attack_reward.append(0.1 * self.current_time + deviation)
-                    defender_reward.append(-100 + 0.1 * self.current_time)
+                    defender_reward.append(-0.01 * self.current_time)
         else:
             attack_reward.append(0)
             defender_reward.append(0)
+        
+        print(f"Attack reward: {sum(attack_reward)} and Defender reward: {sum(defender_reward)}")
 
         total_reward = sum(attack_reward) + sum(defender_reward)
         
@@ -400,16 +417,17 @@ class CompetingHybridEnv(gym.Env):
 
             self.voltage_deviations = np.abs(self.state[:self.NUM_EVCS] - 1.0)
             max_deviations= np.max(self.voltage_deviations)
-            rewards = self.calculate_rewards(self.voltage_deviations)
+
+            self.rewards = self.calculate_rewards(self.voltage_deviations)
 
             
             # Check if episode is done
-            done = self.time_step_counter >= 1000 or max_deviations>= 0.5
+            done = self.time_step_counter >= 100 or max_deviations>= 0.5
             
             # Get info
-            info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration)
+            info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)
             
-            return self.state, rewards, done, False, info
+            return self.state, self.rewards, done, False, info
 
         except Exception as e:
             print(f"Error in step: {e}")
@@ -418,7 +436,7 @@ class CompetingHybridEnv(gym.Env):
                 {'dqn': 0.0, 'attacker': 0.0, 'defender': 0.0},
                 True,
                 False,
-                self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration)
+                self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)
             )
 
     def process_dqn_action(self, dqn_action):
@@ -497,21 +515,21 @@ class CompetingHybridEnv(gym.Env):
         self.attack_duration = dqn_action[-1] * 10
         self.attack_start_time = self.time_step_counter
 
-    def apply_actions(self, dqn_action, sac_attacker_action, sac_defender_action):
-        """Apply all agent actions and return new state."""
-        # Get PINN prediction
-        prediction = self.pinn_model(tf.constant([[self.current_time]], dtype=tf.float32))
-        evcs_vars = prediction[:, 2 * self.NUM_BUSES:].numpy()[0]
-        new_state = self.get_observation(evcs_vars)
+    # def apply_actions(self, dqn_action, sac_attacker_action, sac_defender_action):
+    #     """Apply all agent actions and return new state."""
+    #     # Get PINN prediction
+    #     prediction = self.pinn_model(tf.constant([[self.current_time]], dtype=tf.float32))
+    #     evcs_vars = prediction[:, 2 * self.NUM_BUSES:].numpy()[0]
+    #     new_state = self.get_observation(evcs_vars)
         
-        # Apply attack if active
-        if self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
-            new_state = self.apply_attack_effects(new_state, sac_attacker_action, self.target_evcs, self.attack_duration)
+    #     # Apply attack if active
+    #     if self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
+    #         new_state = self.apply_attack_effects(new_state, sac_attacker_action, self.target_evcs, self.attack_duration)
         
-        # Apply defender actions
-        new_state = self.apply_defender_actions(new_state, sac_defender_action)
+    #     # Apply defender actions
+    #     new_state = self.apply_defender_actions(new_state, sac_defender_action)
         
-        return new_state
+    #     return new_state
 
     def apply_attack_effects(self, state, attacker_action, target_evcs):
         """Apply attacker actions (FDI attacks)."""
@@ -533,12 +551,12 @@ class CompetingHybridEnv(gym.Env):
             for i in range(self.NUM_EVCS):
                 if target_evcs[i] == 1:  # Check if this EVCS is targeted
                     # Apply voltage FDI
-                    state[i] += np.clip(v_fdi[i], -0.001, 0.001)
+                    state[i] += np.clip(v_fdi[i], -0.01, 0.01)
                     # Apply current FDI
                     state[3*self.NUM_EVCS + i] += np.clip(
                         i_fdi[i],
-                        -0.001,
-                         0.001
+                        -0.01,
+                         0.01
                     )
                 
             return state
@@ -608,7 +626,7 @@ class CompetingHybridEnv(gym.Env):
             print(f"Error in apply_defender_actions: {e}")
             return state
 
-    def get_info(self, voltage_deviations, target_evcs, attack_duration):
+    def get_info(self, voltage_deviations, target_evcs, attack_duration, rewards):
         """Get current environment info."""
         try:
             # Calculate voltage deviations
@@ -627,7 +645,8 @@ class CompetingHybridEnv(gym.Env):
                 'cumulative_deviation': float(self.cumulative_deviation),
                 'target_evcs': target_evcs.astype(int),
                 'attack_duration': int(attack_duration),
-                'voltage_deviations': self.voltage_deviations
+                'voltage_deviations': self.voltage_deviations,
+                'rewards': rewards
             }
             
         except Exception as e:
@@ -640,6 +659,7 @@ class CompetingHybridEnv(gym.Env):
                 'target_evcs': [0] * self.NUM_EVCS,
                 'attack_duration': 0,
                 'voltage_deviations': [0.0] * self.NUM_EVCS,
+                'rewards': 0.0
             }
 
     

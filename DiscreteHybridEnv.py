@@ -150,8 +150,8 @@ class DiscreteHybridEnv(gym.Env):
 
     def step(self, encoded_dqn_action):
         """Execute one time step within the environment."""
-        # Decode the action using the improved decoder
-        dqn_action = self.decode_dqn_action(encoded_dqn_action)
+        # Decode the action and convert to numpy array to ensure proper handling
+        dqn_action = np.array(self.decode_action(encoded_dqn_action))
         
         # Set attack parameters
         self.attack_active = np.any(dqn_action[:-1] > 0)  # Check if any EVCS is targeted
@@ -206,7 +206,7 @@ class DiscreteHybridEnv(gym.Env):
         # Check termination conditions
         # done = self.time_step_counter >= 1000 or np.any( voltage_deviations > 0.5)
 
-        done = self.time_step_counter >= 1000 or max_deviations >= 0.4
+        done = self.time_step_counter >= 100 or max_deviations >= 0.5
         truncated = False
 
         info = {
@@ -235,13 +235,13 @@ class DiscreteHybridEnv(gym.Env):
     def decode_action(self, action_scalar):
         """Decode a scalar action into target EVCSs and duration."""
         try:
-            # Ensure action_scalar is an integer
-            if isinstance(action_scalar, (np.ndarray, np.generic)):
-                action_scalar = int(action_scalar.item())
-            elif not isinstance(action_scalar, (int, np.integer)):
-                raise ValueError(f"Expected integer action, got {type(action_scalar)}")
-
+            # Convert numpy array to scalar if needed
+            if isinstance(action_scalar, np.ndarray):
+                action_scalar = action_scalar.item()
+            
             # Validate action range
+            if not isinstance(action_scalar, (int, np.integer)):
+                action_scalar = int(action_scalar)
             if action_scalar >= self.action_space.n:
                 raise ValueError(f"Action {action_scalar} exceeds action space size {self.action_space.n}")
 
@@ -254,58 +254,11 @@ class DiscreteHybridEnv(gym.Env):
             for i in range(self.NUM_EVCS):
                 target_evcs[i] = (target_value >> i) & 1
 
-            # Combine into final action array
-            decoded_action = np.append(target_evcs, duration_value)
-
-            # # Debug information
-            # print(f"Action scalar: {action_scalar}")
-            # print(f"Target value: {target_value}")
-            # print(f"Duration value: {duration_value}")
-            # print(f"Target EVCSs: {target_evcs}")
-            # print(f"Duration: {duration_value}")
-
-            return decoded_action
+            # Return decoded action
+            return np.concatenate([target_evcs, [duration_value]])
 
         except Exception as e:
             print(f"Error decoding action {action_scalar}: {str(e)}")
-            # Return safe default action
-            return np.zeros(self.NUM_EVCS + 1, dtype=np.int32)
-
-    def decode_dqn_action(self, action_scalar):
-        """Decode DQN action scalar into target EVCSs and duration."""
-        try:
-            # Convert action_scalar to integer, handling different input types
-            if isinstance(action_scalar, (np.ndarray, list)):
-                if action_scalar.size == 1:  # Handle 0-dimensional array
-                    action_scalar = action_scalar.item()
-                else:
-                    action_scalar = action_scalar[0]
-            action_idx = int(action_scalar)
-            
-            # Validate action range
-            if action_idx >= self.action_space.n:
-                print(f"Warning: Action {action_idx} exceeds action space size {self.action_space.n}")
-                action_idx = action_idx % self.action_space.n
-            
-            # Initialize output array
-            action = np.zeros(self.NUM_EVCS + 1, dtype=np.int32)
-            
-            # Extract target selection and duration
-            target_value = action_idx // self.NUM_DURATION
-            duration_value = action_idx % self.NUM_DURATION
-            
-            # Convert target_value to binary representation
-            for i in range(self.NUM_EVCS):
-                action[i] = (target_value >> i) & 1
-            
-            # Set duration
-            action[-1] = duration_value
-            
-            return action
-
-        except Exception as e:
-            print(f"Error decoding DQN action: {e}")
-            print(f"Action scalar: {action_scalar}, Type: {type(action_scalar)}")
             # Return safe default action
             return np.zeros(self.NUM_EVCS + 1, dtype=np.int32)
 
@@ -324,3 +277,25 @@ class DiscreteHybridEnv(gym.Env):
             i_out_values.append(i_out)
             i_dc_values.append(i_dc)
         return np.concatenate([v_out_values, soc_values, v_dc_values, i_out_values, i_dc_values])
+
+    def get_pinn_state(self):
+        """Get state from PINN model."""
+        try:
+            # Create time input for PINN model
+            t = tf.constant([[self.current_time]], dtype=tf.float32)
+            
+            # Get PINN model predictions
+            pinn_outputs = self.pinn_model(t)
+            
+            # Extract voltage and EVCS variables
+            num_voltage_outputs = self.NUM_BUSES * 2
+            voltage_outputs = pinn_outputs[:, :num_voltage_outputs]
+            evcs_vars = pinn_outputs[:, num_voltage_outputs:]
+            
+            # Convert to observation format
+            observation = self.get_observation(evcs_vars[0])  # Use first batch item
+            return observation
+            
+        except Exception as e:
+            print(f"Error in get_pinn_state: {e}")
+            return np.zeros(self.observation_space.shape[0])
