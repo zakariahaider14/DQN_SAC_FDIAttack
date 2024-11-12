@@ -301,10 +301,10 @@ class CompetingHybridEnv(gym.Env):
             if self.target_evcs[i] == 1:  # Only consider targeted EVCSs
                 if deviation > 0.5:
                     attack_reward.append(100 - 0.1 * self.current_time)
-                    defender_reward.append(-0.01 * self.current_time - 10*deviation)
+                    defender_reward.append(-0.1 * self.current_time - 10*deviation)
                 else:
-                    attack_reward.append(0.1 * self.current_time + deviation)
-                    defender_reward.append(-0.01 * self.current_time)
+                    attack_reward.append(-0.1 * self.current_time + deviation)
+                    defender_reward.append(0.01 * self.current_time)
         else:
             attack_reward.append(0)
             defender_reward.append(0)
@@ -407,7 +407,7 @@ class CompetingHybridEnv(gym.Env):
             if self.attack_active and self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
                 print("Attack active with Defender")
                 for t in range(self.attack_start_time, self.attack_end_time):
-                    current_state = self.apply_attack_effects(current_state, attacker_action, self.target_evcs)
+                    current_state = self.apply_attack_effects(current_state, attacker_action, self.target_evcs, self.attack_duration)
                     current_state = self.apply_defender_actions(current_state, defender_action)
             # print("Current state: 2 ", current_state.shape)
 
@@ -531,36 +531,44 @@ class CompetingHybridEnv(gym.Env):
         
     #     return new_state
 
-    def apply_attack_effects(self, state, attacker_action, target_evcs):
-        """Apply attacker actions (FDI attacks)."""
+    def apply_attack_effects(self, state, attack_action, target_evcs, attack_duration):
+        """Apply attack effects with proper shape handling."""
         try:
             # Ensure inputs are numpy arrays
             state = np.array(state)
-            attacker_action = np.array(attacker_action)
-            self.target_evcs = target_evcs  # Ensure int type
-
-            # Only apply attack if within attack window
-            if not (self.attack_active and self.attack_start_time <= self.time_step_counter <= self.attack_end_time):
-                return state
-
-            # Split attacker action into voltage and current FDI
-            v_fdi = attacker_action[:self.NUM_EVCS]
-            i_fdi = attacker_action[self.NUM_EVCS:]
-
-            # Apply attack only to targeted EVCSs
-            for i in range(self.NUM_EVCS):
-                if target_evcs[i] == 1:  # Check if this EVCS is targeted
-                    # Apply voltage FDI
-                    state[i] += np.clip(v_fdi[i], -0.01, 0.01)
-                    # Apply current FDI
-                    state[3*self.NUM_EVCS + i] += np.clip(
-                        i_fdi[i],
-                        -0.01,
-                         0.01
-                    )
+            attack_action = np.array(attack_action).flatten()
+            target_evcs = np.array(target_evcs, dtype=bool)
+            
+            # Ensure attack_action has correct shape (NUM_EVCS * 2)
+            if attack_action.shape[0] != self.NUM_EVCS * 2:
+                print(f"Reshaping attack_action from {attack_action.shape} to ({self.NUM_EVCS * 2},)")
+                attack_action = np.resize(attack_action, self.NUM_EVCS * 2)
                 
-            return state
-
+            # Split attack actions for voltage and current
+            voltage_attacks = attack_action[:self.NUM_EVCS]
+            current_attacks = attack_action[self.NUM_EVCS:]
+            
+            # Apply attacks only to targeted EVCSs
+            state_copy = state.copy()
+            for i in range(self.NUM_EVCS):
+                if target_evcs[i]:
+                    # Apply voltage attack (first NUM_EVCS elements are voltages)
+                    state_copy[i] = np.clip(
+                        state[i] * (1 + voltage_attacks[i]),
+                        self.voltage_limits[0],
+                        self.voltage_limits[1]
+                    )
+                    
+                    # Apply current attack (based on get_observation structure)
+                    current_idx = 3 * self.NUM_EVCS + i  # i_out index
+                    state_copy[current_idx] = np.clip(
+                        state[current_idx] * (1 + current_attacks[i]),
+                        self.current_limits[0],
+                        self.current_limits[1]
+                    )
+            
+            return state_copy
+            
         except Exception as e:
             print(f"Error in apply_attack_effects: {e}")
             return state
@@ -568,9 +576,14 @@ class CompetingHybridEnv(gym.Env):
     def apply_defender_actions(self, state, defender_action):
         """Apply defender actions (WAC parameter adjustments)."""
         try:
-            # Ensure inputs are numpy arrays
+            # Ensure inputs are numpy arrays and reshape defender_action if needed
             state = np.array(state)
-            defender_action = np.array(defender_action)
+            defender_action = np.array(defender_action).flatten()
+            
+            # Ensure defender_action has correct shape (NUM_EVCS * 2)
+            if defender_action.shape[0] != self.NUM_EVCS * 2:
+                print(f"Reshaping defender_action from {defender_action.shape} to ({self.NUM_EVCS * 2},)")
+                defender_action = np.resize(defender_action, self.NUM_EVCS * 2)
             
             # Split defender action into Kp and Ki adjustments
             kp_adjustments = defender_action[:self.NUM_EVCS]
@@ -579,48 +592,33 @@ class CompetingHybridEnv(gym.Env):
             # Update WAC parameters with saturation
             self.kp_vout = np.clip(
                 self.WAC_KP_VOUT_DEFAULT + kp_adjustments,
-                self.CONTROL_MIN,
-                self.CONTROL_MAX
+                0.0,  # Using 0.0 as CONTROL_MIN
+                self.control_saturation  # Using physics_params control_saturation
             )
             self.ki_vout = np.clip(
                 self.WAC_KI_VOUT_DEFAULT + ki_adjustments,
-                self.CONTROL_MIN,
-                self.CONTROL_MAX
+                0.0,
+                self.control_saturation
             )
 
-            # Extract voltages from state
+            # Extract voltages from state (based on get_observation structure)
             v_out = state[:self.NUM_EVCS]
 
             # Calculate voltage error
             self.voltage_error = self.WAC_VOUT_SETPOINT - v_out
 
-            # Update integral term with anti-windup
-            self.wac_integral = np.clip(
-                self.wac_integral + self.voltage_error * self.TIME_STEP,
-                self.INTEGRAL_MIN,
-                self.INTEGRAL_MAX
+            # Apply WAC control using the class method
+            self.apply_wac_control()
+
+            # Apply control effect to state
+            state_copy = state.copy()
+            state_copy[:self.NUM_EVCS] = np.clip(
+                v_out * (1 + self.wac_control),
+                self.voltage_limits[0],
+                self.voltage_limits[1]
             )
 
-            # Calculate control signal
-            self.wac_control = (
-                self.kp_vout * self.voltage_error +
-                self.ki_vout * self.wac_integral
-            )
-
-            # Apply control saturation
-            self.wac_control = np.clip(
-                self.wac_control,
-                0,
-                1
-            )
-
-            modulation_index_vout = self.wac_control 
-
-            # Apply control effect to state - corrected indexing
-            v_dc_indices = slice(10, 10 + self.NUM_EVCS)  # indices for v_dc values
-            state[:self.NUM_EVCS] = modulation_index_vout * state[v_dc_indices]
-
-            return state
+            return state_copy
 
         except Exception as e:
             print(f"Error in apply_defender_actions: {e}")
