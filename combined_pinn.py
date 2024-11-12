@@ -374,7 +374,7 @@ class CompetingHybridEnv(gym.Env):
             # print(f"Attack duration: {self.attack_duration}")
             # print(f"Attack active: {self.attack_active}")
             # print(f"Time step: {self.time_step_counter}")
-            print(f"Attack window: {self.attack_start_time} to {self.attack_end_time}")
+            # print(f"Attack window: {self.attack_start_time} to {self.attack_end_time}")
 
 
             # Get PINN prediction (without passing actions directly)
@@ -384,7 +384,7 @@ class CompetingHybridEnv(gym.Env):
             
             # Get current state observation
             current_state = self.get_observation(evcs_vars)
-            print("Current state: 1 ", current_state.shape)
+            # print("Current state: 1 ", current_state.shape)
 
             # Apply actions
             if self.attack_active and self.attack_start_time <= self.time_step_counter <= self.attack_end_time:
@@ -666,6 +666,18 @@ class CompetingHybridEnv(gym.Env):
         return np.concatenate([v_out_values, soc_values, v_dc_values, i_out_values, i_dc_values])
 
     def control_saturation(self, value, v_min, v_max):
+        """
+        Saturate control signal between minimum and maximum values.
+
+        Parameters:
+        value (float): The control signal value to be saturated.
+        v_min (float): The minimum allowable value for the control signal.
+        v_max (float): The maximum allowable value for the control signal.
+
+        Returns:
+        float: The saturated control signal value, constrained between v_min and v_max.
+               Returns 0.0 if an error occurs during the operation.
+        """
         """Saturate control signal between minimum and maximum values."""
         try:
             return np.clip(value, v_min, v_max)
