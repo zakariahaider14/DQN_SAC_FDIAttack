@@ -106,7 +106,7 @@ class DiscreteHybridEnv(gym.Env):
         duration_value = decoded_action[-1]
         # Map duration_value (0 to NUM_DURATION-1) to actual time steps
         # For example, if each increment represents 40 time steps
-        return duration_value * 40  # This will give durations from 0 to 360 time steps
+        return duration_value * 10  # This will give durations from 0 to 360 time steps
 
     def apply_attack_effect(self, i):
         """Apply attack effects with random magnitudes within specified ranges."""
@@ -206,7 +206,7 @@ class DiscreteHybridEnv(gym.Env):
         # Check termination conditions
         # done = self.time_step_counter >= 1000 or np.any( voltage_deviations > 0.5)
 
-        done = self.time_step_counter >= 100 or max_deviations >= 0.5
+        done = self.time_step_counter >= 1000 or max_deviations >= 0.5
         truncated = False
 
         info = {
@@ -224,7 +224,7 @@ class DiscreteHybridEnv(gym.Env):
         """Calculate rewards based on voltage deviations."""
         rewards = []
         for i, deviation in enumerate(voltage_deviations):
-            if deviation > 0.5:
+            if deviation > 0.1:
                 # Higher reward for successful attack (larger deviation)
                 rewards.append(100 - 0.1 * self.current_time)
             else:

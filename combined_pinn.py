@@ -18,8 +18,8 @@ class CompetingHybridEnv(gym.Env):
         self.v_out_nominal = physics_params.get('v_out_nominal', 1.0)
         self.current_limits = physics_params.get('current_limits', (-1.0, 1.0))
         self.i_rated = physics_params.get('i_rated', 1.0)
-        self.attack_magnitude = physics_params.get('attack_magnitude', 0.001)
-        self.current_magnitude = physics_params.get('current_magnitude', 0.001)
+        self.attack_magnitude = physics_params.get('attack_magnitude', 0.01)
+        self.current_magnitude = physics_params.get('current_magnitude', 0.01)
         self.wac_kp_limits = physics_params.get('wac_kp_limits', (0.0, 2.0))
         self.wac_ki_limits = physics_params.get('wac_ki_limits', (0.0, 2.0))
         self.control_saturation = physics_params.get('control_saturation', 0.3)
@@ -105,7 +105,7 @@ class CompetingHybridEnv(gym.Env):
         self.INTEGRAL_MIN = -10.0
 
         # Add voltage and current limits
-        self.voltage_limits = (0.85, 1.15)  # ±15% of nominal voltage
+        self.voltage_limits = (0.8, 1.2)  # ±15% of nominal voltage
         self.current_limits = (-1.0, 1.0)   # Normalized current limits
 
         self.reset_state()
@@ -288,7 +288,7 @@ class CompetingHybridEnv(gym.Env):
             print(f"Error in validate_physics: {e}")
             return False
 
-    def calculate_rewards(self, voltage_deviations):
+    def calculate_rewardsssss(self, voltage_deviations):
         """Calculate rewards for all agents."""
         attack_reward = []
         defender_reward = []    
@@ -299,7 +299,7 @@ class CompetingHybridEnv(gym.Env):
 
         for i, deviation in enumerate(self.voltage_deviations):
             if self.target_evcs[i] == 1:  # Only consider targeted EVCSs
-                if deviation > 0.5:
+                if deviation > 0.1:
                     attack_reward.append(100 - 0.1 * self.current_time)
                     defender_reward.append(-0.1 * self.current_time - 1*deviation)
                 else:
@@ -314,6 +314,59 @@ class CompetingHybridEnv(gym.Env):
         total_reward = sum(attack_reward) + sum(defender_reward)
         
         return total_reward
+
+
+    def calculate_rewards(self, voltage_deviations):
+        """Calculate rewards for all agents."""
+        try:
+            attack_rewards = []
+            defender_rewards = []
+            
+            # Calculate rewards for each EVCS
+            for i, deviation in enumerate(voltage_deviations):
+                if self.target_evcs[i] == 1:  # For targeted EVCSs
+                    if deviation > 0.05:  # Significant deviation
+                        # Attacker gets positive reward for successful attack
+                        attack_reward = 10.0 * deviation - 0.1 * self.current_time
+                        # Defender gets negative reward proportional to deviation
+                        defend_reward = -20.0 * deviation - 0.01 * self.current_time
+                    else:  # Small deviation
+                        # Attacker gets small reward for attempting
+                        attack_reward = 0.1 * deviation
+                        # Defender gets positive reward for maintaining stability
+                        defend_reward = 5.0 * (0.05 - deviation) + 0.01 * self.current_time
+                else:  # For non-targeted EVCSs
+                    attack_reward = 0.0
+                    # Defender gets small positive reward for maintaining stability
+                    defend_reward = 1.0 * (0.05 - deviation) if deviation < 0.05 else -5.0 * deviation
+                    
+                attack_rewards.append(attack_reward)
+                defender_rewards.append(defend_reward)
+            
+            # Sum rewards for each agent
+            total_attack_reward = float(np.sum(attack_rewards))
+            total_defend_reward = float(np.sum(defender_rewards))
+            
+            # Add time-based penalties to discourage prolonged attacks
+            if self.attack_active:
+                time_penalty = 0.05 * self.current_time
+                total_attack_reward -= time_penalty
+                total_defend_reward += 0.02 * self.current_time  # Small bonus for defender over time
+            
+            print(f"Attack reward: {total_attack_reward} and Defender reward: {total_defend_reward}")
+            
+            return {
+                'attacker': total_attack_reward,
+                'defender': total_defend_reward
+            }
+            
+        except Exception as e:
+            print(f"Error in calculate_rewards: {e}")
+            return {
+                'attacker': 0.0,
+                'defender': 0.0
+        }
+
     
     def prepare_defender_actions_for_pinn(self, defender_action):
         """Prepare defender actions in the format expected by PINN model."""
@@ -372,7 +425,7 @@ class CompetingHybridEnv(gym.Env):
             # First NUM_EVCS elements are target selection (0 or 1)
             # Last element is attack duration (0-9)
             self.target_evcs = dqn_action[:-1].astype(int) # Convert to int array
-            self.attack_duration = int(dqn_action[-1] * 40)  # Scale duration
+            self.attack_duration = int(dqn_action[-1] * 10)  # Scale duration
 
             # Set attack parameters
             if np.any(self.target_evcs > 0):  # Check if any EVCS is targeted
@@ -384,14 +437,6 @@ class CompetingHybridEnv(gym.Env):
                 self.attack_active = False
                 self.attack_start_time = 0
                 self.attack_end_time = 0
-
-            # Debug prints
-            # print(f"Raw DQN action: {dqn_action}")
-            # print(f"Processed target EVCSs: {self.target_evcs}")
-            # print(f"Attack duration: {self.attack_duration}")
-            # print(f"Attack active: {self.attack_active}")
-            # print(f"Time step: {self.time_step_counter}")
-            # print(f"Attack window: {self.attack_start_time} to {self.attack_end_time}")
 
 
             # Get PINN prediction (without passing actions directly)
@@ -422,7 +467,7 @@ class CompetingHybridEnv(gym.Env):
 
             
             # Check if episode is done
-            done = self.time_step_counter >= 100 or max_deviations>= 0.5
+            done = self.time_step_counter >= 1000 or max_deviations>= 0.5
             
             # Get info
             info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)

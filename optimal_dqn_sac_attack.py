@@ -137,8 +137,8 @@ v_battery = 800 / V_BASE_DC  # Convert to p.u.
 R_battery = 0.01 / Z_BASE_LV  # Convert to p.u.
 
 # Time parameters
-TIME_STEP = 1e-3  # 1 ms in seconds
-TOTAL_TIME = 100  # 100 seconds
+TIME_STEP = 0.1  # 1 ms in seconds
+TOTAL_TIME = 1000  # 100 seconds
 
 # Load IEEE 33-bus system data
 line_data = [
@@ -1393,7 +1393,7 @@ if __name__ == '__main__':
     # Train DQN with monitoring
     print("Training DQN agent...")
     dqn_agent.learn(
-        total_timesteps=1000,
+        total_timesteps=15000,
         callback=dqn_checkpoint,
         progress_bar=True
     )
@@ -1478,7 +1478,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=500,
+        total_timesteps=15000,
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1486,13 +1486,13 @@ if __name__ == '__main__':
 
     print("Training the SAC Defender agent...")
     sac_defender.learn(
-        total_timesteps=500,
+        total_timesteps=5000,
         callback=sac_defender_checkpoint,
         progress_bar=True
     )
     sac_defender.save(f"{model_dir}/sac_defender_final")
 
-    num_iterations = 2
+    num_iterations = 6
     # Joint training loop with validation
     print("Starting joint training...")
     for iteration in range(num_iterations):
@@ -1506,9 +1506,9 @@ if __name__ == '__main__':
         ]:
             print(f"\nTraining {name}...")
             if name == "SAC Defender":
-                total_timesteps=500
+                total_timesteps=5000
             else:
-                total_timesteps=500
+                total_timesteps=15000
             agent.learn(
                 total_timesteps=total_timesteps,
                 callback=callback,
@@ -1541,7 +1541,7 @@ if __name__ == '__main__':
         sac_defender=sac_defender,
         Y_bus_tf=Y_bus_tf,
         bus_data=bus_data,
-        epochs=50,
+        epochs=5000,
         batch_size=128
         )
 
