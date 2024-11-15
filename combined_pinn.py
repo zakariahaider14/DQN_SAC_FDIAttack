@@ -309,7 +309,7 @@ class CompetingHybridEnv(gym.Env):
             attack_reward.append(0)
             defender_reward.append(0)
         
-        print(f"Attack reward: {sum(attack_reward)} and Defender reward: {sum(defender_reward)}")
+        # print(f"Attack reward: {sum(attack_reward)} and Defender reward: {sum(defender_reward)}")
 
         total_reward = sum(attack_reward) + sum(defender_reward)
         

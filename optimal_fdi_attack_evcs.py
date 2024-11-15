@@ -309,7 +309,7 @@ class SACWrapper(gym.Env):
             
         except Exception as e:
             print(f"Error in SACWrapper step: {e}")
-            print(f"Action shape: {action.shape if isinstance(action, np.ndarray) else type(action)}")
+            # print(f"Action shape: {action.shape if isinstance(action, np.ndarray) else type(action)}")
             if 'dqn_action' in locals():
                 print(f"DQN action shape: {dqn_action.shape}, type: {type(dqn_action)}")
             
@@ -1617,7 +1617,7 @@ if __name__ == '__main__':
         sac_defender=sac_defender,
         Y_bus_tf=Y_bus_tf,
         bus_data=bus_data,
-        epochs=2000,
+        epochs=5000,
         batch_size=128
         )
 

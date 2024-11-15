@@ -137,7 +137,7 @@ v_battery = 800 / V_BASE_DC  # Convert to p.u.
 R_battery = 0.01 / Z_BASE_LV  # Convert to p.u.
 
 # Time parameters
-TIME_STEP = 0.1  # 1 ms in seconds
+TIME_STEP = 0.1 # 1 ms in seconds
 TOTAL_TIME = 1000  # 100 seconds
 
 # Load IEEE 33-bus system data
@@ -1249,6 +1249,79 @@ def validate_physics_constraints(env, dqn_agent, sac_attacker, sac_defender, num
 
 
 
+
+
+def plot_evaluation_resultssssss(results, save_dir="./figures"):
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Generate timestamp for unique filenames
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Extract data from results
+    time_steps = results['time_steps']
+    cumulative_deviations = results['cumulative_deviations']
+    voltage_deviations = np.array(results['voltage_deviations'])
+    attack_active_states = results['attack_active_states']
+    avg_attack_durations = results['avg_attack_durations']
+
+    # Plot cumulative deviations over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, cumulative_deviations, label='Cumulative Deviations')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Cumulative Deviations')
+    plt.title('Cumulative Deviations Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/cumulative_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
+    plt.xlabel('Time (s)')
+    plt.ylabel('Rewards from Joint Environment')
+    plt.title('Rewards Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+
+    # Plot voltage deviations for each EVCS over time
+    plt.figure(figsize=(12, 6))
+    for i in range(voltage_deviations.shape[1]):
+        plt.plot(time_steps, voltage_deviations[:, i], label=f'EVCS {i+1} Voltage Deviation')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Voltage Deviation (p.u.)')
+    plt.title('Voltage Deviations Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/voltage_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot attack active states over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, attack_active_states, label='Attack Active State')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Attack Active State')
+    plt.title('Attack Active State Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/attack_states_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot average attack durations for each EVCS
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(avg_attack_durations)), avg_attack_durations, tick_label=[f'EVCS {i+1}' for i in range(len(avg_attack_durations))])
+    plt.xlabel('EVCS')
+    plt.ylabel('Average Attack Duration (s)')
+    plt.title('Average Attack Duration for Each EVCS')
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/avg_attack_durations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
 def plot_evaluation_results(results, save_dir="./figures"):
     # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
@@ -1328,80 +1401,6 @@ def plot_evaluation_results(results, save_dir="./figures"):
     plt.close()
 
 
-def plot_evaluation_resultsssss(results, save_dir="./figures"):
-    # Create directory if it doesn't exist
-    os.makedirs(save_dir, exist_ok=True)
-    
-    # Generate timestamp for unique filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Extract data from results
-    time_steps = results['time_steps']
-    cumulative_deviations = results['cumulative_deviations']
-    voltage_deviations = np.array(results['voltage_deviations'])
-    attack_active_states = results['attack_active_states']
-    avg_attack_durations = results['avg_attack_durations']
-
-    # Plot cumulative deviations over time
-    plt.figure(figsize=(12, 6))
-    plt.plot(time_steps, cumulative_deviations, label='Cumulative Deviations')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Cumulative Deviations')
-    plt.title('Cumulative Deviations Over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(f"{save_dir}/cumulative_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(time_steps, results['rewards'], label='rewards') # Fixed to use results dictionary
-    plt.xlabel('Time (s)')
-    plt.ylabel('Rewards from Joint Environment')
-    plt.title('Rewards Over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-
-
-    # Plot voltage deviations for each EVCS over time
-    plt.figure(figsize=(12, 6))
-    for i in range(voltage_deviations.shape[1]):
-        plt.plot(time_steps, voltage_deviations[:, i], label=f'EVCS {i+1} Voltage Deviation')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Voltage Deviation (p.u.)')
-    plt.title('Voltage Deviations Over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(f"{save_dir}/voltage_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Plot attack active states over time
-    plt.figure(figsize=(12, 6))
-    plt.plot(time_steps, attack_active_states, label='Attack Active State')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Attack Active State')
-    plt.title('Attack Active State Over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(f"{save_dir}/attack_states_{timestamp}.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Plot average attack durations for each EVCS
-    plt.figure(figsize=(12, 6))
-    plt.bar(range(len(avg_attack_durations)), avg_attack_durations, tick_label=[f'EVCS {i+1}' for i in range(len(avg_attack_durations))])
-    plt.xlabel('EVCS')
-    plt.ylabel('Average Attack Duration (s)')
-    plt.title('Average Attack Duration for Each EVCS')
-    plt.grid(True)
-    plt.savefig(f"{save_dir}/avg_attack_durations_{timestamp}.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-
-
-
-
 if __name__ == '__main__':
     # Define physics parameters
     physics_params = {
@@ -1470,7 +1469,7 @@ if __name__ == '__main__':
     # Train DQN with monitoring
     print("Training DQN agent...")
     dqn_agent.learn(
-        total_timesteps=15000,
+        total_timesteps=5000,
         callback=dqn_checkpoint,
         progress_bar=True
     )
@@ -1526,8 +1525,8 @@ if __name__ == '__main__':
         'MlpPolicy',
         sac_defender_env,
         verbose=1,
-        learning_rate=1e-7,
-        buffer_size=1000,
+        learning_rate=1e-6,
+        buffer_size=3000,
         batch_size=64,
         gamma=0.99,
         tau=0.005,
@@ -1555,7 +1554,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=15000,
+        total_timesteps=5000,
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1583,9 +1582,9 @@ if __name__ == '__main__':
         ]:
             print(f"\nTraining {name}...")
             if name == "SAC Defender":
-                total_timesteps=5000
+                total_timesteps=2500
             else:
-                total_timesteps=15000
+                total_timesteps=5000
             agent.learn(
                 total_timesteps=total_timesteps,
                 callback=callback,
@@ -1618,7 +1617,7 @@ if __name__ == '__main__':
         sac_defender=sac_defender,
         Y_bus_tf=Y_bus_tf,
         bus_data=bus_data,
-        epochs=5000,
+        epochs=2000,
         batch_size=128
         )
 
@@ -1669,21 +1668,38 @@ if __name__ == '__main__':
         num_steps=1000
     )
 
-    # Convert NumPy arrays to lists before saving
-    serializable_results = {
-        'time_steps': results['time_steps'].tolist(),
-        'cumulative_deviations': results['cumulative_deviations'].tolist(),
-        'voltage_deviations': [vd.tolist() for vd in results['voltage_deviations']],
-        'attack_active_states': results['attack_active_states'].tolist(),
-        'target_evcs_history': [targets.tolist() if isinstance(targets, np.ndarray) else targets 
-                                for targets in results['target_evcs_history']],
-        'attack_durations': results['attack_durations'].tolist(),
-        'observations': [obs.tolist() for obs in results['observations']],
-        'avg_attack_durations': results['avg_attack_durations'].tolist(),
-        'rewards': results['rewards'].tolist()
-    }
+    # # Convert NumPy arrays to lists before saving
+    # serializable_results = {
+    #     'time_steps': results['time_steps'].tolist(),
+    #     'cumulative_deviations': results['cumulative_deviations'].tolist(),
+    #     'voltage_deviations': [vd.tolist() for vd in results['voltage_deviations']],
+    #     'attack_active_states': results['attack_active_states'].tolist(),
+    #     'target_evcs_history': [targets.tolist() if isinstance(targets, np.ndarray) else targets 
+    #                             for targets in results['target_evcs_history']],
+    #     'attack_durations': results['attack_durations'].tolist(),
+    #     'observations': [obs.tolist() for obs in results['observations']],
+    #     'avg_attack_durations': results['avg_attack_durations'].tolist(),
+    #     'rewards': results['rewards'].tolist()
+    # }
 
-    # Assuming 'results' is the dictionary returned from evaluate_model_with_three_agents
+    # # Assuming 'results' is the dictionary returned from evaluate_model_with_three_agents
+    # plot_evaluation_results(serializable_results)
+
+    serializable_results = {
+    'time_steps': np.arange(len(results['cumulative_deviations'])).tolist(),
+    'cumulative_deviations': results['cumulative_deviations'].tolist(),
+    'voltage_deviations': [vd.tolist() for vd in results['voltage_deviations']],
+    'attack_active_states': results['attack_active_states'].tolist(),
+    'target_evcs_history': [targets.tolist() if isinstance(targets, np.ndarray) else targets 
+                            for targets in results['target_evcs_history']],
+    'attack_durations': results['attack_durations'].tolist(),
+    'observations': [obs.tolist() for obs in results['observations']],
+    'avg_attack_durations': results['avg_attack_durations'].tolist(),
+    'rewards': [float(r) if not isinstance(r, dict) else r['attacker'] + r['defender'] 
+                for r in results['rewards']]  # Convert rewards to simple numerical values
+}
+
+    # Plot the results
     plot_evaluation_results(serializable_results)
 
     print("\nTraining completed successfully!")
