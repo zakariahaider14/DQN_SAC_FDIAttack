@@ -58500,3 +58500,123 @@ Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
 Attack active with Defender
 Attack reward: 8.311976380348204 and Defender reward: -16.736952760696415
 Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.311985917091368 and Defender reward: -16.736971834182743
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.311995453834532 and Defender reward: -16.73699090766907
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312006182670592 and Defender reward: -16.73701236534119
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312016911506651 and Defender reward: -16.73703382301331
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312028236389159 and Defender reward: -16.737056472778324
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31203836917877 and Defender reward: -16.737076738357548
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312050290107726 and Defender reward: -16.737100580215458
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312059230804442 and Defender reward: -16.73711846160889
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312069363594054 and Defender reward: -16.737138727188114
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312077708244322 and Defender reward: -16.73715541648865
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312087244987486 and Defender reward: -16.73717448997498
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31209678173065 and Defender reward: -16.737193563461307
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312106318473814 and Defender reward: -16.737212636947636
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312116451263426 and Defender reward: -16.73723290252686
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312126584053038 and Defender reward: -16.737253168106083
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31213671684265 and Defender reward: -16.737273433685306
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312148041725157 and Defender reward: -16.73729608345032
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312157578468321 and Defender reward: -16.73731515693665
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31216830730438 and Defender reward: -16.73733661460877
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312178440093993 and Defender reward: -16.737356880187992
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312187380790709 and Defender reward: -16.737374761581425
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312196917533873 and Defender reward: -16.737393835067753
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312205262184142 and Defender reward: -16.73741052436829
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312214798927306 and Defender reward: -16.737429597854618
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312223143577574 and Defender reward: -16.737446287155155
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31223208427429 and Defender reward: -16.737464168548588
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312241621017455 and Defender reward: -16.737483242034916
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312249965667723 and Defender reward: -16.737499931335453
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312258310317992 and Defender reward: -16.73751662063599
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312267847061156 and Defender reward: -16.737535694122318
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312276191711424 and Defender reward: -16.737552383422855
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312283940315245 and Defender reward: -16.737567880630497
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312292284965514 and Defender reward: -16.737584569931034
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312300033569334 and Defender reward: -16.737600067138676
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312307782173155 and Defender reward: -16.737615564346317
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312314934730528 and Defender reward: -16.737629869461063
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312322683334349 and Defender reward: -16.737645366668705
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312329239845274 and Defender reward: -16.737658479690555
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.312336392402647 and Defender reward: -16.7376727848053
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
+Attack active with Defender
+Attack reward: 8.31234354496002 and Defender reward: -16.737687089920048
+Action shapes - DQN: (), Attacker: (10,), Defender: (10,)
