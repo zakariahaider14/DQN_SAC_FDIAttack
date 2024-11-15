@@ -1249,9 +1249,86 @@ def validate_physics_constraints(env, dqn_agent, sac_attacker, sac_defender, num
 
 
 
-
-
 def plot_evaluation_results(results, save_dir="./figures"):
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Generate timestamp for unique filenames
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Extract data from results
+    time_steps = np.array(results['time_steps'])
+    cumulative_deviations = np.array(results['cumulative_deviations'])
+    voltage_deviations = np.array(results['voltage_deviations'])
+    attack_active_states = np.array(results['attack_active_states'])
+    avg_attack_durations = np.array(results['avg_attack_durations'])
+
+    # Plot cumulative deviations over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, cumulative_deviations, label='Cumulative Deviations')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Cumulative Deviations')
+    plt.title('Cumulative Deviations Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/cumulative_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot total rewards over time
+    plt.figure(figsize=(12, 6))
+    # Convert rewards to total numerical values if they're dictionaries
+    total_rewards = []
+    for reward in results['rewards']:
+        if isinstance(reward, dict):
+            total_rewards.append(reward.get('attacker', 0) + reward.get('defender', 0))
+        else:
+            total_rewards.append(float(reward))
+    
+    plt.plot(time_steps, total_rewards, label='Total Rewards')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Total Rewards')
+    plt.title('Total Rewards Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/rewards_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot voltage deviations for each EVCS over time
+    plt.figure(figsize=(12, 6))
+    for i in range(voltage_deviations.shape[1]):
+        plt.plot(time_steps, voltage_deviations[:, i], label=f'EVCS {i+1} Voltage Deviation')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Voltage Deviation (p.u.)')
+    plt.title('Voltage Deviations Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/voltage_deviations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot attack active states over time
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_steps, attack_active_states, label='Attack Active State')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Attack Active State')
+    plt.title('Attack Active State Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/attack_states_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot average attack durations for each EVCS
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(avg_attack_durations)), avg_attack_durations, 
+            tick_label=[f'EVCS {i+1}' for i in range(len(avg_attack_durations))])
+    plt.xlabel('EVCS')
+    plt.ylabel('Average Attack Duration (s)')
+    plt.title('Average Attack Duration for Each EVCS')
+    plt.grid(True)
+    plt.savefig(f"{save_dir}/avg_attack_durations_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_evaluation_resultsssss(results, save_dir="./figures"):
     # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
     

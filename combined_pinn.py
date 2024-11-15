@@ -425,7 +425,7 @@ class CompetingHybridEnv(gym.Env):
             # First NUM_EVCS elements are target selection (0 or 1)
             # Last element is attack duration (0-9)
             self.target_evcs = dqn_action[:-1].astype(int) # Convert to int array
-            self.attack_duration = int(dqn_action[-1] * 10)  # Scale duration
+            self.attack_duration = int(dqn_action[-1])*10  # Scale duration
 
             # Set attack parameters
             if np.any(self.target_evcs > 0):  # Check if any EVCS is targeted
