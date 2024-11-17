@@ -75,7 +75,7 @@ R = 0.1 / Z_BASE_LV  # Convert to p.u.
 C_dc = 0.01 * S_BASE / (V_BASE_LV**2)  # Convert to p.u.
 
 
-L_dc = 55e-6 / Z_BASE_LV  # Convert to p.u.
+L_dc = 10e-6 / Z_BASE_LV  # Convert to p.u.
 v_battery = 800 / V_BASE_DC  # Convert to p.u.
 R_battery = 0.1 / Z_BASE_LV  # Convert to p.u.
 
@@ -255,29 +255,31 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
 
         for i, bus in enumerate(EVCS_BUSES):
             evcs = evcs_vars[:, i*18:(i+1)*18]
-            v_out = tf.exp(evcs[:, 4])  # Output voltage
-            v_out_attacked = v_out + attack_vector[i]
-            
-            # Penalize voltages outside acceptable range
-            upper_violation = tf.maximum(0.0, v_out_attacked - MAX_VOLTAGE_PU)
-            lower_violation = tf.maximum(0.0, MIN_VOLTAGE_PU - v_out_attacked)
-            voltage_violation_loss += tf.reduce_mean(
-                VOLTAGE_VIOLATION_PENALTY * (tf.square(upper_violation) + tf.square(lower_violation))
-            )
-
             v_ac, i_ac, v_dc, i_dc, v_out, i_out, i_L1, i_L2, v_c, soc, \
             delta, omega, phi_d, phi_q, gamma_d, gamma_q, i_d, i_q = tf.split(evcs, num_or_size_splits=18, axis=1)
-
-            attack = attack_vector[i]
-            v_out_attacked = v_out + attack
-            v_out_attacked = safe_op(tf.exp(v_out_attacked))
-            attacked_voltages.append(v_out_attacked)
 
             # Ensure positive voltages
             v_ac = safe_op(tf.exp(v_ac))
             v_dc = safe_op(tf.exp(v_dc))
             v_out = safe_op(tf.exp(v_out))
             v_c = safe_op(tf.exp(v_c))
+
+
+            attack = attack_vector[i]
+            # v_out = tf.exp(evcs[:, 4])  # Output voltage
+            v_out_attacked = v_out + attack
+
+            v_out_attacked = safe_op(tf.exp(v_out_attacked))
+            attacked_voltages.append(v_out_attacked)
+            
+            # Penalize voltages outside acceptable range
+            upper_violation = tf.maximum(0.0, v_out_attacked - MAX_VOLTAGE_PU)
+            lower_violation = tf.maximum(0.0, MIN_VOLTAGE_PU - v_out_attacked)
+
+            voltage_violation_loss += tf.reduce_mean(
+                VOLTAGE_VIOLATION_PENALTY * (tf.square(upper_violation) + tf.square(lower_violation))
+            )
+
 
             # Clarke and Park Transformations
             v_alpha = v_ac
@@ -298,8 +300,7 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             v_dc_actual = v_dc *   (V_BASE_DC/V_BASE_LV)
             v_out_actual = v_out * (V_BASE_DC/V_BASE_LV)
             # Modified attack impact calculation
-            v_out_attacked = v_out + attack
-            v_out_attacked = safe_op(tf.exp(v_out_attacked))
+
             
             # Calculate voltage deviation from nominal
             voltage_deviation = tf.abs(v_out_attacked - WAC_VOUT_SETPOINT)
@@ -583,23 +584,33 @@ def evaluate_model(model, attack_vector=None):
     plt.show()
 
 class ModelTrainer:
-    def __init__(self, num_evcs, initial_learning_rate=1e-7):  # Even lower learning rate
+    def __init__(self, num_evcs, initial_learning_rate=1e-6):
         self.model = EVCS_PowerSystem_PINN()
+        # self.attack_vector = tf.Variable(
+        #     tf.random.uniform([num_evcs], minval=-0.003, maxval=0.003, dtype=tf.float32),
+        #     trainable=True,
+        #     name="attack_vector"
+        # )
+
+        #used for benign response plotting  
         self.attack_vector = tf.Variable(
-            tf.random.uniform([num_evcs], minval=-0.001, maxval=0.001, dtype=tf.float32),
-            trainable=True,
+            tf.zeros([num_evcs], dtype=tf.float32),
+            trainable=False,  # Make it non-trainable
             name="attack_vector"
         )
         
-        # Use SGD with momentum for more stable training
+        # Modified optimizers with only clipnorm
         self.model_optimizer = tf.keras.optimizers.SGD(
             learning_rate=initial_learning_rate,
             momentum=0.9,
-            nesterov=True
+            nesterov=True,
+            clipnorm=1.0  # Only use clipnorm
         )
+        
         self.attack_optimizer = tf.keras.optimizers.SGD(
-            learning_rate=1e-5,
-            momentum=0.9
+            learning_rate=1e-6,
+            momentum=0.9,
+            clipnorm=1.0  # Only use clipnorm
         )
         
         self.best_attack = tf.Variable(
@@ -611,6 +622,14 @@ class ModelTrainer:
         # Gradient scaling factor
         self.grad_scale = tf.Variable(1.0, dtype=tf.float32)
 
+        # Learning rate scheduler
+        self.lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate,
+            decay_steps=1000,
+            decay_rate=0.95,
+            staircase=True
+        )
+
         # Add these new tracking variables
         self.attack_history = []
         self.voltage_history = []
@@ -618,9 +637,9 @@ class ModelTrainer:
     @tf.function
     def train_step(self, t_batch, Y_bus_tf, bus_data):
         with tf.GradientTape(persistent=True) as tape:
-            # Scale the forward pass
-            predictions = self.model(t_batch) * self.grad_scale
-            predictions = tf.clip_by_value(predictions, -5.0, 5.0)
+            # Scale predictions for numerical stability
+            predictions = self.model(t_batch)
+            predictions = tf.clip_by_value(predictions, -10.0, 10.0)
             
             # Track voltages before attack
             evcs_vars = predictions[:, 2*NUM_BUSES:]
@@ -640,53 +659,37 @@ class ModelTrainer:
                 []
             )
             
-            # Calculate scaled loss
+            # Calculate loss with additional stability measures
             physics_loss = physics_loss_with_attack(
                 self.model, t_batch, Y_bus_tf, bus_data, self.attack_vector
             )
             
-            # Add strong regularization
-            l2_reg = 1e-3 * tf.add_n([tf.nn.l2_loss(v) for v in self.model.trainable_variables])
-            total_loss = (physics_loss + l2_reg) / self.grad_scale
+            # Add L2 regularization
+            l2_reg = 1e-4 * tf.add_n([tf.nn.l2_loss(v) for v in self.model.trainable_variables])
+            total_loss = physics_loss + l2_reg
             
             attack_impact = self.calculate_attack_impact(t_batch)
+
+        # Process gradients with additional safety checks
+        def process_gradients(grads):
+            if grads is None:
+                return None
+            # Remove NaN/Inf values
+            grads = tf.where(tf.math.is_finite(grads), grads, tf.zeros_like(grads))
+            # Scale large gradients
+            grad_norm = tf.norm(grads)
+            grads = tf.where(grad_norm > 1.0, grads / grad_norm, grads)
+            return grads
 
         # Get and process gradients
         model_gradients = tape.gradient(total_loss, self.model.trainable_variables)
         attack_gradients = tape.gradient(total_loss, self.attack_vector)
 
-        # Gradient checking before processing
-        for var, grad in zip(self.model.trainable_variables, model_gradients):
-            if grad is not None:
-                tf.debugging.check_numerics(grad, f"Raw gradient for variable {var.name} contains NaN or Inf.")
-            else:
-                tf.print(f"WARNING: Raw gradient is None for variable {var.name}")
+        # Process gradients
+        model_gradients = [process_gradients(g) for g in model_gradients]
+        attack_gradients = process_gradients(attack_gradients)
 
-        # Process model gradients
-        def safe_ops(g):
-            if g is not None:
-                # Remove any NaN or Inf values
-                g = tf.where(tf.math.is_finite(g), g, tf.zeros_like(g))
-                # Clip gradient values
-                g = tf.clip_by_value(g, -0.1, 0.1)
-                # Scale down large gradients
-                g_norm = tf.norm(g)
-                g = tf.where(g_norm > 1.0, g / g_norm, g)
-                return g
-            return None
-
-        # Apply safe operations to gradients
-        model_gradients = [safe_ops(g) for g in model_gradients]
-        attack_gradients = safe_ops(attack_gradients)
-
-        # Gradient checking after processing
-        for var, grad in zip(self.model.trainable_variables, model_gradients):
-            if grad is not None:
-                tf.debugging.check_numerics(grad, f"Processed gradient for variable {var.name} contains NaN or Inf.")
-            else:
-                tf.print(f"WARNING: Processed gradient is None for variable {var.name}")
-
-        # Apply gradients if they are valid
+        # Apply gradients only if they are valid
         if all(g is not None for g in model_gradients):
             self.model_optimizer.apply_gradients(
                 zip(model_gradients, self.model.trainable_variables)
@@ -701,7 +704,7 @@ class ModelTrainer:
                 tf.clip_by_value(self.attack_vector, -0.1, 0.1)
             )
 
-        # Rest of the code remains the same...
+        # Update best attack if necessary
         update_condition = tf.logical_and(
             attack_impact > self.best_attack_impact,
             tf.math.is_finite(attack_impact)
@@ -712,15 +715,6 @@ class ModelTrainer:
         )
         self.best_attack_impact.assign(
             tf.where(update_condition, attack_impact, self.best_attack_impact)
-        )
-
-        # Adjust gradient scaling factor
-        self.grad_scale.assign(
-            tf.where(
-                tf.reduce_all([tf.reduce_all(tf.math.is_finite(g)) for g in model_gradients]),
-                self.grad_scale * 1.01,  # Increase slightly if gradients are good
-                self.grad_scale * 0.5    # Decrease significantly if we see any problems
-            )
         )
 
         return total_loss, attack_impact
@@ -825,7 +819,7 @@ class ModelTrainer:
 
 
 
-def train_model_with_attack(epochs=5000, batch_size=128):
+def train_model_with_attack(epochs=5000, batch_size=128):  # Reduced epochs and batch size
     # Initialize trainer
     trainer = ModelTrainer(NUM_EVCS)
     
@@ -835,6 +829,11 @@ def train_model_with_attack(epochs=5000, batch_size=128):
     # Training loop
     best_attack = None
     best_impact = float('-inf')
+    
+    # Add early stopping
+    patience = 50
+    min_loss = float('inf')
+    patience_counter = 0
     
     try:
         for epoch in range(epochs):
@@ -846,7 +845,18 @@ def train_model_with_attack(epochs=5000, batch_size=128):
                 best_impact = impact
                 best_attack = tf.identity(trainer.attack_vector)
 
-            if epoch % 500 == 0:
+            # Early stopping logic
+            if loss < min_loss:
+                min_loss = loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch}")
+                break
+
+            if epoch % 100 == 0:  # Reduced logging frequency
                 tf.print(f"Epoch {epoch}, Loss: {loss:.6f}, "
                         f"Impact: {impact:.6f}, "
                         f"Current Attack Vector: {trainer.attack_vector.numpy()}")
@@ -888,6 +898,68 @@ def plot_attack_vector(attack_vector):
     plt.grid(True)
     plt.show()
 
+def evaluate_model_with_plots(model, attack_vector=None):
+        """
+        Evaluate the model's performance and create plots with or without attack
+        """
+        # Generate test time points
+        t_test = tf.linspace(0.0, TOTAL_TIME, 1000)  # Increased points for smoother plots
+        t_test = tf.reshape(t_test, [-1, 1])
+        
+        # Get predictions
+        predictions = model(t_test)
+        
+        # Extract EVCS variables
+        evcs_vars = predictions[:, 2*NUM_BUSES:]
+        
+        # Create figure for voltage outputs
+        plt.figure(figsize=(12, 6))
+        
+        # Plot title will indicate if this is with or without attack
+        title_suffix = "with Attack" if attack_vector is not None else "without Attack"
+        plt.title(f'EVCS Output Voltages {title_suffix}')
+        
+        # Plot each EVCS output voltage
+        for i, bus in enumerate(EVCS_BUSES):
+            evcs = evcs_vars[:, i*18:(i+1)*18]
+            v_out = tf.exp(evcs[:, 4])  # Output voltage
+            
+            if attack_vector is not None:
+                v_out = v_out + attack_vector[i]
+            
+            plt.plot(t_test[:, 0], v_out, label=f'EVCS {i} at Bus {bus}')
+        
+        plt.grid(True)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Output Voltage (p.u.)')
+        plt.legend()
+        
+        # Add horizontal lines for voltage limits
+        plt.axhline(y=MAX_VOLTAGE_PU, color='r', linestyle='--', alpha=0.3, label='Upper Limit')
+        plt.axhline(y=MIN_VOLTAGE_PU, color='r', linestyle='--', alpha=0.3, label='Lower Limit')
+        
+        plt.tight_layout()
+        
+        # Print analysis results
+        print(f"\nVoltage Analysis {title_suffix}:")
+        print("-------------------------")
+        for i, bus in enumerate(EVCS_BUSES):
+            evcs = evcs_vars[:, i*18:(i+1)*18]
+            v_out = tf.exp(evcs[:, 4])
+            if attack_vector is not None:
+                v_out = v_out + attack_vector[i]
+            
+            v_mean = tf.reduce_mean(v_out)
+            v_std = tf.math.reduce_std(v_out)
+            v_max = tf.reduce_max(v_out)
+            v_min = tf.reduce_min(v_out)
+            
+            print(f"\nEVCS {i} at Bus {bus}:")
+            print(f"  Mean voltage: {v_mean:.4f} p.u.")
+            print(f"  Std deviation: {v_std:.4f} p.u.")
+            print(f"  Max voltage: {v_max:.4f} p.u.")
+            print(f"  Min voltage: {v_min:.4f} p.u.")
+
 # Main execution
 if __name__ == '__main__':
     try:
@@ -898,6 +970,10 @@ if __name__ == '__main__':
         tf.print("\nEvaluating model without attack:")
         evaluate_model(model)
 
+        evaluate_model_with_plots(model)
+        plt.savefig('voltage_without_attack.png')
+        
+
         # Evaluate the model with best attack if available
         if best_attack is not None:
             tf.print("\nEvaluating model with best attack:")
@@ -905,8 +981,13 @@ if __name__ == '__main__':
             evaluate_attack(model, best_attack, t_eval, Y_bus_tf, bus_data)
             evaluate_model(model, best_attack)
             plot_attack_vector(best_attack)
+            evaluate_model_with_plots(model, best_attack)
+            plt.savefig('voltage_with_attack.png')
+        
         else:
             tf.print("\nNo valid attack vector was found during training.")
+
+        plt.show()
             
     except Exception as e:
         tf.print(f"An error occurred during execution: {str(e)}")

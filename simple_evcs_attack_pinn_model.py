@@ -18,6 +18,12 @@ V_BASE_LV = 800    # V
 V_BASE_DC = 800    # V
 
 
+# Add these constants near the top with other system parameters
+MAX_VOLTAGE_PU = 1.2  # Maximum allowable voltage in per unit
+MIN_VOLTAGE_PU = 0.8  # Minimum allowable voltage in per unit
+VOLTAGE_VIOLATION_PENALTY = 1000.0  # Large penalty for voltage violations
+
+
 # Calculate base currents and impedances
 I_BASE_HV = S_BASE / (np.sqrt(3) * V_BASE_HV)
 I_BASE_LV = S_BASE / (np.sqrt(3) * V_BASE_LV)
@@ -40,24 +46,24 @@ V_OUT_VARIATION = 0.05  # 5% allowed variation
 
 # Controller Parameters
 EVCS_PLL_KP = 0.1
-EVCS_PLL_KI = 5.0
+EVCS_PLL_KI = 0.5
 MAX_PLL_ERROR = 10.0
 
-EVCS_OUTER_KP = 0.1 #0.5 and 0.3 was original value
-EVCS_OUTER_KI = 0.01
+EVCS_OUTER_KP = 20 #0.5 and 0.3 was original value
+EVCS_OUTER_KI = 0.05
 
-EVCS_INNER_KP = 0.3
-EVCS_INNER_KI = 0.5
+EVCS_INNER_KP = 10
+EVCS_INNER_KI = 0.06
 OMEGA_N = 2 * np.pi * 60  # Nominal angular frequency (60 Hz)
 
 # Wide Area Controller Parameters
-WAC_KP_VDC = 0.3
-WAC_KI_VDC = 0.5
+WAC_KP_VDC = 10
+WAC_KI_VDC = 0.06
 
-WAC_KP_VOUT = 1
-WAC_KI_VOUT = -0.5 # original value is 0.5
-WAC_VOLTAGE_SETPOINT = V_BASE_DC / V_BASE_LV  # Desired DC voltage in p.u.
-WAC_VOUT_SETPOINT = V_BASE_DC / V_BASE_LV  # Desired output voltage in p.u.
+WAC_KP_VOUT = 20
+WAC_KI_VOUT =0.03 # original value is 0.5
+WAC_VOLTAGE_SETPOINT = 1.0 # V_BASE_DC / V_BASE_LV  # Desired DC voltage in p.u.
+WAC_VOUT_SETPOINT = 1.0 # V_BASE_DC / V_BASE_LV  # Desired output voltage in p.u.
 
 
 # Other Parameters
@@ -69,12 +75,12 @@ R = 0.1 / Z_BASE_LV  # Convert to p.u.
 C_dc = 0.01 * S_BASE / (V_BASE_LV**2)  # Convert to p.u.
 
 
-L_dc = 55e-6 / Z_BASE_LV  # Convert to p.u.
+L_dc = 10e-6 / Z_BASE_LV  # Convert to p.u.
 v_battery = 800 / V_BASE_DC  # Convert to p.u.
 R_battery = 0.1 / Z_BASE_LV  # Convert to p.u.
 
 # Time parameters
-TIME_STEP = 0.01  # 1 ms
+TIME_STEP = 0.1  # 1 ms
 TOTAL_TIME = 500  # 100 seconds
 
 
@@ -100,11 +106,11 @@ line_data = [
 
 bus_data = np.array([
     [1, 0, 0, 0], [2, 100, 60, 0], [3, 70, 40, 0], [4, 120, 80, 0], [5, 80, 30, 0],
-    [6, 60, 20, 0], [7, 145, 100, 0], [8, 160, 100, 0], [9, 60, 20, 0], [10, 60, 20, 0],
-    [11, 100, 30, 0], [12, 60, 35, 0], [13, 60, 35, 0], [14, 80, 80, 0], [15, 100, 10, 0],
+    [6, 60, 20, 0], [7, 145, 100, 0], [8, 160, 100, 0], [9, 60, 20, 0], [10, 100, 60, 0],
+    [11, 100, 30, 0], [12, 60, 35, 0], [13, 60, 35, 0], [14, 80, 80, 0], [15, 100, 60, 0],
     [16, 100, 20, 0], [17, 60, 20, 0], [18, 90, 40, 0], [19, 90, 40, 0], [20, 90, 40, 0],
     [21, 90, 40, 0], [22, 90, 40, 0], [23, 90, 40, 0], [24, 420, 200, 0], [25, 380, 200, 0],
-    [26, 100, 25, 0], [27, 60, 25, 0], [28, 60, 20, 0], [29, 120, 70, 0], [30, 200, 600, 0],
+    [26, 100, 25, 0], [27, 60, 25, 0], [28, 60, 20, 0], [29, 120, 70, 0], [30, 160, 510, 0],
     [31, 150, 70, 0], [32, 210, 100, 0], [33, 60, 40, 0]
 ])
 
@@ -199,6 +205,11 @@ MIN_VOLTAGE_LIMIT = 0.80
 LEARNING_RATE_ATTACK = 1e-2  # Separate learning rate for attack optimization
 VOLTAGE_CONSTRAINT_WEIGHT = 1.0  # Weight for voltage constraints
 
+# Add these constants near the top with other system parameters
+MAX_VOLTAGE_PU = 1.1  # Maximum allowable voltage in per unit
+MIN_VOLTAGE_PU = 0.9  # Minimum allowable voltage in per unit
+VOLTAGE_VIOLATION_PENALTY = 1000.0  # Large penalty for voltage violations
+
 def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
     with tf.GradientTape(persistent=True) as tape:
         tape.watch(t)
@@ -232,6 +243,8 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
         thermal_limit_loss = 0.0
         coordination_loss = 0.0
         constraint_loss = 0.0
+        voltage_violation_loss = 0.0
+        voltage_regulation_loss = 0.0
         
         # Store attacked voltages for coordination
         attacked_voltages = []
@@ -241,25 +254,43 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
         wac_error_vout = tf.zeros_like(t)
         wac_integral_vout = tf.zeros_like(t)
 
-
         for i, bus in enumerate(EVCS_BUSES):
             evcs = evcs_vars[:, i*18:(i+1)*18]
-
             v_ac, i_ac, v_dc, i_dc, v_out, i_out, i_L1, i_L2, v_c, soc, \
             delta, omega, phi_d, phi_q, gamma_d, gamma_q, i_d, i_q = tf.split(evcs, num_or_size_splits=18, axis=1)
-
-            attack = attack_vector[i]
-            v_out_attacked = v_out + attack
-            v_out_attacked = safe_op(tf.exp(v_out_attacked))
-            attacked_voltages.append(v_out_attacked)
-            
-
 
             # Ensure positive voltages
             v_ac = safe_op(tf.exp(v_ac))
             v_dc = safe_op(tf.exp(v_dc))
             v_out = safe_op(tf.exp(v_out))
             v_c = safe_op(tf.exp(v_c))
+
+
+            attack = attack_vector[i]
+            # v_out = tf.exp(evcs[:, 4])  # Output voltage
+            v_out_attacked = v_out + attack
+
+            v_out_attacked = safe_op(tf.exp(v_out_attacked))
+            attacked_voltages.append(v_out_attacked)
+            
+            # Penalize voltages outside acceptable range
+            upper_violation = tf.maximum(0.0, v_out_attacked - MAX_VOLTAGE_PU)
+            lower_violation = tf.maximum(0.0, MIN_VOLTAGE_PU - v_out_attacked)
+
+            #removed for benign response plotting
+
+            voltage_violation_loss += tf.reduce_mean(
+                VOLTAGE_VIOLATION_PENALTY * (tf.square(upper_violation) + tf.square(lower_violation))
+            )
+
+            v_out_regulation_loss = safe_op(tf.reduce_mean(
+                tf.square(tf.maximum(0.0, 0.95 - v_out_attacked) + 
+                tf.maximum(0.0, v_out - 1.05))
+                ))      
+
+            VOLTAGE_REG_WEIGHT = 10.0 
+
+            voltage_regulation_loss += VOLTAGE_REG_WEIGHT * v_out_regulation_loss
 
             # Clarke and Park Transformations
             v_alpha = v_ac
@@ -276,18 +307,11 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             pll_error = safe_op(EVCS_PLL_KP * v_q_normalized + EVCS_PLL_KI * phi_q)
             pll_error = tf.clip_by_value(pll_error, -MAX_PLL_ERROR, MAX_PLL_ERROR)
 
-            # tf.print("EVCS", i, "PLL Dynamics:")
-            # tf.print("  v_q_normalized:", v_q_normalized)
-            # tf.print("  pll_error:", pll_error)
-            # tf.print("  delta:", delta)
-            # tf.print("  omega:", omega)
-
             # Wide Area Controller
             v_dc_actual = v_dc *   (V_BASE_DC/V_BASE_LV)
             v_out_actual = v_out * (V_BASE_DC/V_BASE_LV)
-        # Modified attack impact calculation
-            v_out_attacked = v_out + attack
-            v_out_attacked = safe_op(tf.exp(v_out_attacked))
+            # Modified attack impact calculation
+
             
             # Calculate voltage deviation from nominal
             voltage_deviation = tf.abs(v_out_attacked - WAC_VOUT_SETPOINT)
@@ -303,7 +327,6 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             wac_output_vdc = WAC_KP_VDC * wac_error_vdc + WAC_KI_VDC * wac_integral_vdc
 
             v_dc_ref = WAC_VOLTAGE_SETPOINT + wac_output_vdc
-            # v_dc_ref = tf.constant(EVCS_VOLTAGE / S_BASE_Voltage, dtype=tf.float32) + wac_output_vdc / S_BASE_Voltage
 
             wac_error_vout += WAC_VOUT_SETPOINT - v_out_attacked
             wac_integral_vout += wac_error_vout * TIME_STEP
@@ -311,7 +334,6 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
 
             v_out_ref = WAC_VOUT_SETPOINT + wac_output_vout
             v_out_loss = tf.reduce_mean(tf.square(v_out_attacked - v_out_ref))
-
 
             attack_loss += -ATTACK_WEIGHT * tf.reduce_mean(
             voltage_deviation * impact_scale
@@ -323,8 +345,6 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             )
             attack_loss += 0.5 * attack_magnitude_loss
 
-
-
             # Converter Outer Loop
             i_d_ref = safe_op(EVCS_OUTER_KP * (v_dc - v_dc_ref) + EVCS_OUTER_KI * gamma_d)
             i_q_ref = safe_op(EVCS_OUTER_KP * (0 - v_q) + EVCS_OUTER_KI * gamma_q)
@@ -332,7 +352,6 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             # Converter Inner Loop
             v_d_conv = safe_op(EVCS_INNER_KP * (i_d_ref - i_d) + EVCS_INNER_KI * phi_d - omega * LCL_L1 * i_q + v_d)
             v_q_conv = safe_op(EVCS_INNER_KP * (i_q_ref - i_q) + EVCS_INNER_KI * phi_q + omega * LCL_L1 * i_d + v_q)
-
 
             # Calculate losses
             ddelta_dt = tape.gradient(delta, t)
@@ -366,21 +385,16 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             duty_cycle = tf.clip_by_value(v_out_ref / v_dc, 0, 1)
             v_out_expected = duty_cycle * v_dc
 
-
             v_out_actual = v_out
             v_out_lower = V_OUT_NOMINAL * (1 - V_OUT_VARIATION)
             v_out_upper = V_OUT_NOMINAL * (1 + V_OUT_VARIATION)
             v_out_constraint = safe_op(tf.reduce_mean(tf.square(tf.maximum(0.0, v_out_lower - v_out_actual) + tf.maximum(0.0, v_out_actual - v_out_upper))))
 
-
-            # **Add constraint loss to ensure deviation is within 10%**
             v_out_nominal = V_OUT_NOMINAL
           
             lower_bound = v_out_nominal * 0.80
             upper_bound = v_out_nominal * 1.2
             constraint_loss += tf.reduce_mean(tf.square(tf.maximum(0.0, v_out_attacked - upper_bound) + tf.maximum(0.0, lower_bound - v_out_attacked)))
-
-
 
             L_dc = 0.001 / Z_BASE_LV  # Convert to p.u.
             v_battery = 800 / V_BASE_DC  # Convert to p.u.
@@ -408,21 +422,21 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
                     stability_loss += tf.reduce_mean(
                         tf.square(tf.maximum(0.0, tf.abs(dv_out_dt) - tf.constant(RATE_OF_CHANGE_LIMIT, dtype=tf.float32))))
 
-                    # 2. Power Balance Constraint
+            # 2. Power Balance Constraint
             P_dc = safe_op(v_dc * i_dc)
             P_out = safe_op(v_out_attacked * i_out)
             power_balance_loss += tf.reduce_mean(tf.square(P_dc - P_out))
 
-                    # 3. Thermal Limit Constraint (current-based)
+            # 3. Thermal Limit Constraint (current-based)
             i_limit = 1.2  # 120% of nominal current
             thermal_limit_loss += safe_op(tf.reduce_mean(
                 tf.square(tf.maximum(0.0, tf.abs(i_out) - i_limit))))
 
             # 4. Minimum Voltage Constraint
             voltage_deviation_loss += safe_op(tf.reduce_mean(
-                tf.square(tf.maximum(0.0, MIN_VOLTAGE_LIMIT - v_out_attacked))))
+                tf.square(tf.maximum(0.0, MIN_VOLTAGE_PU - v_out_attacked))))
 
-                    # 5. Modified Attack Impact
+            # 5. Modified Attack Impact
             nominal_voltage = WAC_VOUT_SETPOINT
             voltage_deviation = tf.abs(v_out_attacked - nominal_voltage)
             attack_loss += -ATTACK_WEIGHT * tf.reduce_mean(
@@ -431,13 +445,12 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
             # Modified attack objective (maximize deviation while maintaining stability)
             attack_loss += -ATTACK_WEIGHT * tf.reduce_mean(voltage_deviation) + STABILITY_WEIGHT * stability_loss
 
-        # Voltage constraint (keep within bounds)
+            # Voltage constraint (keep within bounds)
             v_out_constraint = tf.reduce_mean(
             tf.square(tf.maximum(0.0, v_out_attacked - WAC_VOUT_SETPOINT * (1 + ATTACK_BOUNDS))) + \
             tf.square(tf.maximum(0.0, WAC_VOUT_SETPOINT * (1 - ATTACK_BOUNDS) - v_out_attacked))
             )
             voltage_deviation_loss += VOLTAGE_CONSTRAINT_WEIGHT * v_out_constraint
-
 
             # Append all losses
             evcs_loss.extend([
@@ -447,43 +460,6 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
                 power_balance_loss, current_consistency_loss
             ])
 
-            # Print debug information for each loss component
-            # tf.print("  EVCS Losses:")
-            loss_names = [
-                "ddelta_dt", "domega_dt", "dphi_d_dt", "dphi_q_dt",
-                "di_d_dt", "di_q_dt", "di_L1_dt", "di_L2_dt", "dv_c_dt",
-                "dv_dc_dt", "v_out", "v_out_constraint", "di_out_dt", "dsoc_dt",
-                "power_balance", "current_consistency"
-            ]
-            # for name, loss_value in zip(loss_names, evcs_loss[-16:]):
-            #     # tf.print(f"    {name}_loss:", loss_value)
-            
-            
-            
-# # Calculate data loss
-#         # Calculate data loss
-#         data_loss =[]
-#         data_loss = tf.constant(0.0, dtype=tf.float32)
-#         for i, bus in enumerate(EVCS_BUSES):
-#             evcs = evcs_vars[:, i*18:(i+1)*18]
-            
-#             # Interpolate the data to match the current time steps
-#             evcs_id = bus + 1  # Assuming EVCS_BUSES is 0-indexed and evcs_id starts from 1
-#             if evcs_id in evcs_data:
-#                 for j, key in enumerate(['v_ac', 'i_ac', 'v_dc', 'i_dc', 'v_out', 'i_out', 'i_L1', 'i_L2', 'v_c', 'soc', 'delta', 'omega', 'phi_d', 'phi_q', 'gamma_d', 'gamma_q', 'i_d', 'i_q']):
-#                     if key in evcs_data[evcs_id]:
-#                         def interpolate_wrapper(x, xp, fp):
-#                             return np.interp(x, xp, fp).astype(np.float32)
-
-#                         interpolated_data = tf.numpy_function(
-#                             interpolate_wrapper,
-#                             [t, evcs_data[evcs_id]['time'], evcs_data[evcs_id][key]],
-#                             tf.float32
-#                         )
-#                         interpolated_data.set_shape(t.shape)
-#                         data_loss += tf.reduce_mean(tf.square(evcs[:, j] - interpolated_data))
-
-       
         # Combine losses
         power_flow_loss = safe_op(tf.reduce_mean(tf.square(P_mismatch) + tf.square(Q_mismatch)))
         evcs_total_loss = safe_op(tf.reduce_sum(evcs_loss))
@@ -496,19 +472,20 @@ def physics_loss_with_attack(model, t, Y_bus_tf, bus_data, attack_vector):
         tf.square(attacked_voltages - mean_attack)
         )
         
-    # Modified total loss calculation
-        # Combine all losses with weights
+        # Modified total loss calculation
         total_loss = (
             power_flow_loss * POWER_FLOW_WEIGHT +
             evcs_total_loss +
             CONSTRAINT_WEIGHT * wac_loss +
             V_regulation_loss +
+            VOLTAGE_REG_WEIGHT * v_out_regulation_loss +  # Added weighted voltage regulation
             attack_loss +
             STABILITY_WEIGHT * stability_loss +
             POWER_BALANCE_WEIGHT * power_balance_loss +
             THERMAL_LIMIT_WEIGHT * thermal_limit_loss +
             voltage_deviation_loss +
-            COORDINATION_WEIGHT * coordination_loss
+            COORDINATION_WEIGHT * coordination_loss +
+            voltage_violation_loss
         )
 
     del tape
@@ -619,23 +596,33 @@ def evaluate_model(model, attack_vector=None):
     plt.show()
 
 class ModelTrainer:
-    def __init__(self, num_evcs, initial_learning_rate=1e-7):  # Even lower learning rate
+    def __init__(self, num_evcs, initial_learning_rate=1e-6):
         self.model = EVCS_PowerSystem_PINN()
         self.attack_vector = tf.Variable(
-            tf.random.uniform([num_evcs], minval=-0.001, maxval=0.001, dtype=tf.float32),
+            tf.random.uniform([num_evcs], minval=-0.04, maxval=0.04, dtype=tf.float32),
             trainable=True,
             name="attack_vector"
         )
+
+        # #used for benign response plotting  
+        # self.attack_vector = tf.Variable(
+        #     tf.zeros([num_evcs], dtype=tf.float32),
+        #     trainable=False,  # Make it non-trainable
+        #     name="attack_vector"
+        # )
         
-        # Use SGD with momentum for more stable training
+        # Modified optimizers with only clipnorm
         self.model_optimizer = tf.keras.optimizers.SGD(
             learning_rate=initial_learning_rate,
             momentum=0.9,
-            nesterov=True
+            nesterov=True,
+            clipnorm=1.0  # Only use clipnorm
         )
+        
         self.attack_optimizer = tf.keras.optimizers.SGD(
-            learning_rate=1e-5,
-            momentum=0.9
+            learning_rate=1e-6,
+            momentum=0.9,
+            clipnorm=1.0  # Only use clipnorm
         )
         
         self.best_attack = tf.Variable(
@@ -647,60 +634,74 @@ class ModelTrainer:
         # Gradient scaling factor
         self.grad_scale = tf.Variable(1.0, dtype=tf.float32)
 
+        # Learning rate scheduler
+        self.lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate,
+            decay_steps=1000,
+            decay_rate=0.95,
+            staircase=True
+        )
+
+        # Add these new tracking variables
+        self.attack_history = []
+        self.voltage_history = []
+        
     @tf.function
     def train_step(self, t_batch, Y_bus_tf, bus_data):
         with tf.GradientTape(persistent=True) as tape:
-            # Scale the forward pass
-            predictions = self.model(t_batch) * self.grad_scale
-            predictions = tf.clip_by_value(predictions, -5.0, 5.0)
+            # Scale predictions for numerical stability
+            predictions = self.model(t_batch)
+            predictions = tf.clip_by_value(predictions, -10.0, 10.0)
             
-            # Calculate scaled loss
+            # Track voltages before attack
+            evcs_vars = predictions[:, 2*NUM_BUSES:]
+            original_voltages = []
+            attacked_voltages = []
+            
+            for i, bus in enumerate(EVCS_BUSES):
+                v_out = tf.exp(evcs_vars[:, i*18 + 4])
+                v_out_attacked = v_out + self.attack_vector[i]
+                original_voltages.append(v_out)
+                attacked_voltages.append(v_out_attacked)
+            
+            # Store the current state (not part of the graph)
+            tf.py_function(
+                self._update_history,
+                [self.attack_vector, tf.stack(original_voltages), tf.stack(attacked_voltages), t_batch],
+                []
+            )
+            
+            # Calculate loss with additional stability measures
             physics_loss = physics_loss_with_attack(
                 self.model, t_batch, Y_bus_tf, bus_data, self.attack_vector
             )
             
-            # Add strong regularization
-            l2_reg = 1e-3 * tf.add_n([tf.nn.l2_loss(v) for v in self.model.trainable_variables])
-            total_loss = (physics_loss + l2_reg) / self.grad_scale
+            # Add L2 regularization
+            l2_reg = 1e-4 * tf.add_n([tf.nn.l2_loss(v) for v in self.model.trainable_variables])
+            total_loss = physics_loss + l2_reg
             
             attack_impact = self.calculate_attack_impact(t_batch)
+
+        # Process gradients with additional safety checks
+        def process_gradients(grads):
+            if grads is None:
+                return None
+            # Remove NaN/Inf values
+            grads = tf.where(tf.math.is_finite(grads), grads, tf.zeros_like(grads))
+            # Scale large gradients
+            grad_norm = tf.norm(grads)
+            grads = tf.where(grad_norm > 1.0, grads / grad_norm, grads)
+            return grads
 
         # Get and process gradients
         model_gradients = tape.gradient(total_loss, self.model.trainable_variables)
         attack_gradients = tape.gradient(total_loss, self.attack_vector)
 
-        # Gradient checking before processing
-        for var, grad in zip(self.model.trainable_variables, model_gradients):
-            if grad is not None:
-                tf.debugging.check_numerics(grad, f"Raw gradient for variable {var.name} contains NaN or Inf.")
-            else:
-                tf.print(f"WARNING: Raw gradient is None for variable {var.name}")
+        # Process gradients
+        model_gradients = [process_gradients(g) for g in model_gradients]
+        attack_gradients = process_gradients(attack_gradients)
 
-        # Process model gradients
-        def safe_ops(g):
-            if g is not None:
-                # Remove any NaN or Inf values
-                g = tf.where(tf.math.is_finite(g), g, tf.zeros_like(g))
-                # Clip gradient values
-                g = tf.clip_by_value(g, -0.1, 0.1)
-                # Scale down large gradients
-                g_norm = tf.norm(g)
-                g = tf.where(g_norm > 1.0, g / g_norm, g)
-                return g
-            return None
-
-        # Apply safe operations to gradients
-        model_gradients = [safe_ops(g) for g in model_gradients]
-        attack_gradients = safe_ops(attack_gradients)
-
-        # Gradient checking after processing
-        for var, grad in zip(self.model.trainable_variables, model_gradients):
-            if grad is not None:
-                tf.debugging.check_numerics(grad, f"Processed gradient for variable {var.name} contains NaN or Inf.")
-            else:
-                tf.print(f"WARNING: Processed gradient is None for variable {var.name}")
-
-        # Apply gradients if they are valid
+        # Apply gradients only if they are valid
         if all(g is not None for g in model_gradients):
             self.model_optimizer.apply_gradients(
                 zip(model_gradients, self.model.trainable_variables)
@@ -715,7 +716,7 @@ class ModelTrainer:
                 tf.clip_by_value(self.attack_vector, -0.1, 0.1)
             )
 
-        # Rest of the code remains the same...
+        # Update best attack if necessary
         update_condition = tf.logical_and(
             attack_impact > self.best_attack_impact,
             tf.math.is_finite(attack_impact)
@@ -728,16 +729,86 @@ class ModelTrainer:
             tf.where(update_condition, attack_impact, self.best_attack_impact)
         )
 
-        # Adjust gradient scaling factor
-        self.grad_scale.assign(
-            tf.where(
-                tf.reduce_all([tf.reduce_all(tf.math.is_finite(g)) for g in model_gradients]),
-                self.grad_scale * 1.01,  # Increase slightly if gradients are good
-                self.grad_scale * 0.5    # Decrease significantly if we see any problems
-            )
-        )
-
         return total_loss, attack_impact
+
+    def _update_history(self, attack_vector, original_voltages, attacked_voltages, timestamps):
+        """Helper function to store history (called by py_function)"""
+        self.attack_history.append({
+            'time': timestamps.numpy(),
+            'attack_vector': attack_vector.numpy(),
+            'original_voltages': original_voltages.numpy(),
+            'attacked_voltages': attacked_voltages.numpy()
+        })
+
+    def plot_attack_history(self):
+        """Plot the attack vector and voltage evolution over time"""
+        if not self.attack_history:
+            print("No history available to plot")
+            return
+
+        # Convert history to numpy arrays and use indices as time steps
+        num_steps = len(self.attack_history)
+        time_steps = np.arange(num_steps)
+        attacks = np.array([h['attack_vector'] for h in self.attack_history])
+        orig_v = np.array([np.mean(h['original_voltages'], axis=1) for h in self.attack_history])
+        attacked_v = np.array([np.mean(h['attacked_voltages'], axis=1) for h in self.attack_history])
+
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+
+        # Plot attack vectors
+        for i in range(NUM_EVCS):
+            ax1.plot(time_steps, attacks[:, i], label=f'EVCS {i} at Bus {EVCS_BUSES[i]}')
+        ax1.set_xlabel('Training Step')
+        ax1.set_ylabel('Attack Magnitude')
+        ax1.set_title('Attack Vector Evolution')
+        ax1.legend()
+        ax1.grid(True)
+
+        # Plot voltage changes
+        for i in range(NUM_EVCS):
+            ax2.plot(time_steps, orig_v[:, i], '--', label=f'Original V{i}')
+            ax2.plot(time_steps, attacked_v[:, i], '-', label=f'Attacked V{i}')
+        ax2.set_xlabel('Training Step')
+        ax2.set_ylabel('Voltage Deviation (V)')
+        ax2.set_title('Voltage Evolution')
+        ax2.legend()
+        ax2.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+        # Try to save results to file, with error handling
+        final_results = {
+            'attack_vector': attacks[-1],
+            'original_voltages': orig_v[-1],
+            'attacked_voltages': attacked_v[-1],
+            'EVCS_buses': EVCS_BUSES
+        }
+        
+        try:
+            # Try to save in current directory
+            np.save('attack_results.npy', final_results)
+        except PermissionError:
+            try:
+                # Try to save in user's home directory
+                import os
+                home_dir = os.path.expanduser("~")
+                save_path = os.path.join(home_dir, 'attack_results.npy')
+                np.save(save_path, final_results)
+                print(f"\nResults saved to: {save_path}")
+            except Exception as e:
+                print(f"\nCouldn't save results to file: {str(e)}")
+                print("Displaying results in console only.")
+
+        # Print final results
+        print("\nFinal Results:")
+        print(f"Attack Vector: {attacks[-1]}")
+        for i in range(NUM_EVCS):
+            print(f"EVCS {i} at Bus {EVCS_BUSES[i]}:")
+            print(f"  Original Voltage: {orig_v[-1][i]:.4f}")
+            print(f"  Attacked Voltage: {attacked_v[-1][i]:.4f}")
+            print(f"  Voltage Change: {(attacked_v[-1][i] - orig_v[-1][i]):.4f}")
 
     def calculate_attack_impact(self, t_batch):
         """Calculate the impact of current attack vector"""
@@ -760,7 +831,7 @@ class ModelTrainer:
 
 
 
-def train_model_with_attack(epochs=5000, batch_size=128):
+def train_model_with_attack(epochs=5000, batch_size=128):  # Reduced epochs and batch size
     # Initialize trainer
     trainer = ModelTrainer(NUM_EVCS)
     
@@ -770,6 +841,11 @@ def train_model_with_attack(epochs=5000, batch_size=128):
     # Training loop
     best_attack = None
     best_impact = float('-inf')
+    
+    # Add early stopping
+    patience = 500
+    min_loss = float('inf')
+    patience_counter = 0
     
     try:
         for epoch in range(epochs):
@@ -781,7 +857,18 @@ def train_model_with_attack(epochs=5000, batch_size=128):
                 best_impact = impact
                 best_attack = tf.identity(trainer.attack_vector)
 
-            if epoch % 500 == 0:
+            # Early stopping logic
+            if loss < min_loss:
+                min_loss = loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch}")
+                break
+
+            if epoch % 100 == 0:  # Reduced logging frequency
                 tf.print(f"Epoch {epoch}, Loss: {loss:.6f}, "
                         f"Impact: {impact:.6f}, "
                         f"Current Attack Vector: {trainer.attack_vector.numpy()}")
@@ -796,6 +883,9 @@ def train_model_with_attack(epochs=5000, batch_size=128):
     else:
         tf.print("\nTraining completed but no valid attack vector was found.")
 
+    # Add plotting at the end
+    trainer.plot_attack_history()
+    
     return trainer.model, best_attack
 
 def evaluate_attack(model, attack_vector, t, Y_bus_tf, bus_data):
@@ -820,6 +910,68 @@ def plot_attack_vector(attack_vector):
     plt.grid(True)
     plt.show()
 
+def evaluate_model_with_plots(model, attack_vector=None):
+        """
+        Evaluate the model's performance and create plots with or without attack
+        """
+        # Generate test time points
+        t_test = tf.linspace(0.0, TOTAL_TIME, 1000)  # Increased points for smoother plots
+        t_test = tf.reshape(t_test, [-1, 1])
+        
+        # Get predictions
+        predictions = model(t_test)
+        
+        # Extract EVCS variables
+        evcs_vars = predictions[:, 2*NUM_BUSES:]
+        
+        # Create figure for voltage outputs
+        plt.figure(figsize=(12, 6))
+        
+        # Plot title will indicate if this is with or without attack
+        title_suffix = "with Attack" if attack_vector is not None else "without Attack"
+        plt.title(f'EVCS Output Voltages {title_suffix}')
+        
+        # Plot each EVCS output voltage
+        for i, bus in enumerate(EVCS_BUSES):
+            evcs = evcs_vars[:, i*18:(i+1)*18]
+            v_out = tf.exp(evcs[:, 4])  # Output voltage
+            
+            if attack_vector is not None:
+                v_out = v_out + attack_vector[i]
+            
+            plt.plot(t_test[:, 0], v_out, label=f'EVCS {i} at Bus {bus}')
+        
+        plt.grid(True)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Output Voltage (p.u.)')
+        plt.legend()
+        
+        # Add horizontal lines for voltage limits
+        plt.axhline(y=MAX_VOLTAGE_PU, color='r', linestyle='--', alpha=0.3, label='Upper Limit')
+        plt.axhline(y=MIN_VOLTAGE_PU, color='r', linestyle='--', alpha=0.3, label='Lower Limit')
+        
+        plt.tight_layout()
+        
+        # Print analysis results
+        print(f"\nVoltage Analysis {title_suffix}:")
+        print("-------------------------")
+        for i, bus in enumerate(EVCS_BUSES):
+            evcs = evcs_vars[:, i*18:(i+1)*18]
+            v_out = tf.exp(evcs[:, 4])
+            if attack_vector is not None:
+                v_out = v_out + attack_vector[i]
+            
+            v_mean = tf.reduce_mean(v_out)
+            v_std = tf.math.reduce_std(v_out)
+            v_max = tf.reduce_max(v_out)
+            v_min = tf.reduce_min(v_out)
+            
+            print(f"\nEVCS {i} at Bus {bus}:")
+            print(f"  Mean voltage: {v_mean:.4f} p.u.")
+            print(f"  Std deviation: {v_std:.4f} p.u.")
+            print(f"  Max voltage: {v_max:.4f} p.u.")
+            print(f"  Min voltage: {v_min:.4f} p.u.")
+
 # Main execution
 if __name__ == '__main__':
     try:
@@ -830,6 +982,10 @@ if __name__ == '__main__':
         tf.print("\nEvaluating model without attack:")
         evaluate_model(model)
 
+        evaluate_model_with_plots(model)
+        plt.savefig('voltage_without_attack.png')
+        
+
         # Evaluate the model with best attack if available
         if best_attack is not None:
             tf.print("\nEvaluating model with best attack:")
@@ -837,8 +993,13 @@ if __name__ == '__main__':
             evaluate_attack(model, best_attack, t_eval, Y_bus_tf, bus_data)
             evaluate_model(model, best_attack)
             plot_attack_vector(best_attack)
+            evaluate_model_with_plots(model, best_attack)
+            plt.savefig('voltage_with_attack.png')
+        
         else:
             tf.print("\nNo valid attack vector was found during training.")
+
+        plt.show()
             
     except Exception as e:
         tf.print(f"An error occurred during execution: {str(e)}")
