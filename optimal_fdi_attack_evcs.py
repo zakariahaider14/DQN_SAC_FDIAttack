@@ -45,7 +45,7 @@ from datetime import datetime  # Change this line
 # ... existing code ...
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S") 
 
-log_file = f"training_log_{current_time}.txt"
+log_file = f"logs/training_log_{current_time}.txt"
 
 # Create a custom logger class
 class Logger(object):
@@ -1617,7 +1617,7 @@ if __name__ == '__main__':
         sac_defender=sac_defender,
         Y_bus_tf=Y_bus_tf,
         bus_data=bus_data,
-        epochs=5000,
+        epochs=2500,
         batch_size=128
         )
 
