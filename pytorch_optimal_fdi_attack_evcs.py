@@ -200,18 +200,17 @@ def initialize_conductance_matrices():
     """Initialize conductance matrices from Y-bus matrix"""
     global G_d, G_q, B_d, B_q
     
-    # Convert Y_bus to complex tensor explicitly
-    Y_bus_real = torch.real(Y_bus_torch).to(torch.float32)
-    Y_bus_imag = torch.imag(Y_bus_torch).to(torch.float32)
-    Y_bus_complex = torch.complex(Y_bus_real, Y_bus_imag)
+    # Ensure Y_bus_torch is complex
+    Y_bus_complex = Y_bus_torch.to(torch.complex64)
     
     # Extract G (conductance) and B (susceptance) matrices
-    G_d = torch.real(Y_bus_complex)  # Real part for d-axis
-    G_q = torch.real(Y_bus_complex)  # Real part for q-axis
-    B_d = torch.imag(Y_bus_complex)  # Imaginary part for d-axis
-    B_q = torch.imag(Y_bus_complex)  # Imaginary part for q-axis
+    G_d = torch.real(Y_bus_complex).to(torch.float32)  # Real part for d-axis
+    G_q = torch.real(Y_bus_complex).to(torch.float32)  # Real part for q-axis
+    B_d = torch.imag(Y_bus_complex).to(torch.float32)  # Imaginary part for d-axis
+    B_q = torch.imag(Y_bus_complex).to(torch.float32)  # Imaginary part for q-axis
     
     return G_d, G_q, B_d, B_q
+
 # Call this function before training starts
 G_d, G_q, B_d, B_q = initialize_conductance_matrices()
 
@@ -1007,131 +1006,123 @@ def train_model(initial_model, dqn_agent, sac_attacker, sac_defender, Y_bus_torc
 
 def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender, num_steps=1500):
     """Evaluate the environment with DQN, SAC attacker, and SAC defender agents."""
-    try:
-        state, _ = env.reset()
-        done = False
+    # Initialize tracking data with numpy arrays of known size
+    tracking_data = {
+        'time_steps': np.zeros(num_steps),
+        'cumulative_deviations': np.zeros(num_steps),
+        'voltage_deviations': np.zeros((num_steps, env.NUM_EVCS)),
+        'attack_active_states': np.zeros(num_steps, dtype=bool),
+        'target_evcs_history': np.zeros((num_steps, env.NUM_EVCS)),
+        'attack_durations': np.zeros(num_steps),
+        'dqn_actions': np.zeros(num_steps),
+        'sac_attacker_actions': np.zeros((num_steps, env.NUM_EVCS * 2)),
+        'sac_defender_actions': np.zeros((num_steps, env.NUM_EVCS * 2)),
+        'observations': np.zeros((num_steps, env.observation_space.shape[0])),
+        'rewards': np.zeros(num_steps),
+        'evcs_attack_durations': {i: [] for i in range(env.NUM_EVCS)},
+        'attack_counts': np.zeros(env.NUM_EVCS),
+        'total_durations': np.zeros(env.NUM_EVCS)
+    }
 
-        # Initialize tracking variables
-        tracking_data = {
-            'time_steps': [],
-            'cumulative_deviations': [],
-            'voltage_deviations': [],
-            'attack_active_states': [],
-            'target_evcs_history': [],
-            'attack_durations': [],
-            'dqn_actions': [],
-            'sac_attacker_actions': [],
-            'sac_defender_actions': [],
-            'observations': [],
-            'evcs_attack_durations': {i: [] for i in range(env.NUM_EVCS)},
-            'attack_counts': {i: 0 for i in range(env.NUM_EVCS)},
-            'total_durations': {i: 0 for i in range(env.NUM_EVCS)},
-            'rewards': []
-        }
+    try:
+        # Reset environment
+        reset_result = env.reset()
+        if isinstance(reset_result, tuple):
+            state, _ = reset_result
+        else:
+            state = reset_result
+
+        if state is None:
+            raise ValueError("Environment reset returned None state")
+
+        valid_steps = 0  # Track number of valid steps
 
         for step in range(num_steps):
-            current_time = step * env.TIME_STEP
-            
             try:
-                # Get and process actions
+                # Calculate current time
+                current_time = step * env.TIME_STEP
+                tracking_data['time_steps'][step] = current_time
+
+                # Get DQN action
                 dqn_raw = dqn_agent.predict(state, deterministic=True)
-                dqn_action_scalar = dqn_raw[0] if isinstance(dqn_raw, tuple) else dqn_raw
-                
-                if torch.is_tensor(dqn_action_scalar):
-                    if dqn_action_scalar.ndim == 0:
-                        dqn_action_scalar = int(dqn_action_scalar.item())
-                    elif dqn_action_scalar.numel() == 1:
-                        dqn_action_scalar = int(dqn_action_scalar[0].item())
-                elif isinstance(dqn_action_scalar, np.ndarray):
-                    if dqn_action_scalar.ndim == 0:
-                        dqn_action_scalar = int(dqn_action_scalar.item())
-                    elif dqn_action_scalar.size == 1:
-                        dqn_action_scalar = int(dqn_action_scalar[0])
-                
-                dqn_action = env.decode_action(dqn_action_scalar)
-                sac_attacker_action, _ = sac_attacker.predict(state, deterministic=True)
-                sac_defender_action, _ = sac_defender.predict(state, deterministic=True)
-                
-                action = {
+                dqn_action = dqn_raw[0] if isinstance(dqn_raw, tuple) else dqn_raw
+                if isinstance(dqn_action, np.ndarray) and dqn_action.size == 1:
+                    dqn_action = int(dqn_action.item())
+
+                # Get SAC actions
+                attacker_action = sac_attacker.predict(state, deterministic=True)[0]
+                defender_action = sac_defender.predict(state, deterministic=True)[0]
+
+                # Take environment step
+                next_state, rewards, done, truncated, info = env.step({
                     'dqn': dqn_action,
-                    'attacker': sac_attacker_action,
-                    'defender': sac_defender_action
-                }
+                    'attacker': attacker_action,
+                    'defender': defender_action
+                })
 
-                # Take step
-                next_state, rewards, done, truncated, info = env.step(action)
-                
                 # Store data
-                tracking_data['time_steps'].append(current_time)
-                tracking_data['cumulative_deviations'].append(info.get('cumulative_deviation', 0))
-                tracking_data['voltage_deviations'].append(info.get('voltage_deviations', [0] * env.NUM_EVCS))
-                tracking_data['attack_active_states'].append(info.get('attack_active', False))
-                tracking_data['target_evcs_history'].append(info.get('target_evcs', [0] * env.NUM_EVCS))
-                tracking_data['attack_durations'].append(info.get('attack_duration', 0))
-                tracking_data['dqn_actions'].append(dqn_action)
-                tracking_data['sac_attacker_actions'].append(sac_attacker_action)
-                tracking_data['sac_defender_actions'].append(sac_defender_action)
-                tracking_data['observations'].append(next_state)
-                tracking_data['rewards'].append(rewards)
+                tracking_data['cumulative_deviations'][step] = info.get('cumulative_deviation', 0.0)
+                tracking_data['voltage_deviations'][step] = info.get('voltage_deviations', np.zeros(env.NUM_EVCS))
+                tracking_data['attack_active_states'][step] = info.get('attack_active', False)
+                tracking_data['target_evcs_history'][step] = info.get('target_evcs', np.zeros(env.NUM_EVCS))
+                tracking_data['attack_durations'][step] = info.get('attack_duration', 0.0)
+                tracking_data['dqn_actions'][step] = dqn_action
+                tracking_data['sac_attacker_actions'][step] = attacker_action
+                tracking_data['sac_defender_actions'][step] = defender_action
+                tracking_data['observations'][step] = next_state
+                tracking_data['rewards'][step] = float(rewards) if isinstance(rewards, (int, float)) else 0.0
 
-                # Track EVCS-specific attack data
-                target_evcs = info.get('target_evcs', [0] * env.NUM_EVCS)
-                attack_duration = info.get('attack_duration', 0)
+                # Update EVCS-specific attack data
+                target_evcs = info.get('target_evcs', np.zeros(env.NUM_EVCS))
+                attack_duration = info.get('attack_duration', 0.0)
                 for i in range(env.NUM_EVCS):
                     if target_evcs[i] == 1:
                         tracking_data['evcs_attack_durations'][i].append(attack_duration)
                         tracking_data['attack_counts'][i] += 1
                         tracking_data['total_durations'][i] += attack_duration
-                
+
                 state = next_state
+                valid_steps += 1
 
                 if done:
                     break
 
-            except Exception as e:
-                print(f"Error in evaluation step {step}: {str(e)}")
+            except Exception as step_error:
+                print(f"Error in evaluation step {step}: {step_error}")
                 continue
 
+        # Trim arrays to valid steps
+        if valid_steps > 0:
+            for key in tracking_data:
+                if isinstance(tracking_data[key], np.ndarray):
+                    tracking_data[key] = tracking_data[key][:valid_steps]
+
         # Calculate average attack durations
-        avg_attack_durations = []
+        avg_attack_durations = np.zeros(env.NUM_EVCS)
         for i in range(env.NUM_EVCS):
             if tracking_data['attack_counts'][i] > 0:
-                avg_duration = tracking_data['total_durations'][i] / tracking_data['attack_counts'][i]
-            else:
-                avg_duration = 0
-            avg_attack_durations.append(avg_duration)
+                avg_attack_durations[i] = tracking_data['total_durations'][i] / tracking_data['attack_counts'][i]
+        tracking_data['avg_attack_durations'] = avg_attack_durations
 
-        # Convert lists to tensors and add calculated metrics
-        processed_data = {}
-        for key in tracking_data:
-            if isinstance(tracking_data[key], dict):
-                processed_data[key] = tracking_data[key]
-            elif len(tracking_data[key]) > 0:
-                processed_data[key] = torch.tensor(tracking_data[key])
-        
-        processed_data['avg_attack_durations'] = torch.tensor(avg_attack_durations)
-
-        return {
-            'time_steps': processed_data['time_steps'],
-            'cumulative_deviations': processed_data['cumulative_deviations'],
-            'voltage_deviations': processed_data['voltage_deviations'],
-            'attack_active_states': processed_data['attack_active_states'],
-            'target_evcs_history': processed_data['target_evcs_history'],
-            'attack_durations': processed_data['attack_durations'],
-            'dqn_actions': processed_data['dqn_actions'],
-            'sac_attacker_actions': processed_data['sac_attacker_actions'],
-            'sac_defender_actions': processed_data['sac_defender_actions'],
-            'observations': processed_data['observations'],
-            'rewards': processed_data['rewards'],
-            'evcs_attack_durations': processed_data['evcs_attack_durations'],
-            'attack_counts': processed_data['attack_counts'],
-            'total_durations': processed_data['total_durations'],
-            'avg_attack_durations': processed_data['avg_attack_durations']
-        }
+        return tracking_data
 
     except Exception as e:
         print(f"Error in evaluation: {str(e)}")
-        return {}
+        # Return minimal valid data structure
+        return {
+            'time_steps': np.array([0.0]),
+            'cumulative_deviations': np.array([0.0]),
+            'voltage_deviations': np.zeros((1, env.NUM_EVCS)),
+            'attack_active_states': np.array([False]),
+            'target_evcs_history': np.zeros((1, env.NUM_EVCS)),
+            'attack_durations': np.array([0.0]),
+            'dqn_actions': np.array([0]),
+            'sac_attacker_actions': np.zeros((1, env.NUM_EVCS * 2)),
+            'sac_defender_actions': np.zeros((1, env.NUM_EVCS * 2)),
+            'observations': np.zeros((1, env.observation_space.shape[0])),
+            'rewards': np.array([0.0]),
+            'avg_attack_durations': np.zeros(env.NUM_EVCS)
+        }
 
 def check_constraints(state, info):
     """Helper function to check individual constraints."""
@@ -1352,15 +1343,27 @@ def plot_training_history(history):
     plt.close()
 
 def prepare_results_for_plotting(results):
-    """Convert results dictionary to plotting-friendly format."""
+    """Convert results dictionary or tuple to plotting-friendly format."""
+    # Handle tuple case
+    if isinstance(results, tuple):
+        # If it's a tuple with two elements (results, info), take the first element
+        results = results[0] if len(results) > 0 else {}
+    
+    # Handle None case
+    if results is None:
+        return {}
+        
+    # Now process as dictionary
     prepared_results = {}
-    for key, value in results.items():
-        if isinstance(value, torch.Tensor):
-            prepared_results[key] = value.detach().cpu().numpy()
-        elif isinstance(value, dict):
-            prepared_results[key] = value  # Keep dictionaries as-is
-        else:
-            prepared_results[key] = value
+    if isinstance(results, dict):
+        for key, value in results.items():
+            if isinstance(value, torch.Tensor):
+                prepared_results[key] = value.detach().cpu().numpy()
+            elif isinstance(value, dict):
+                prepared_results[key] = value  # Keep dictionaries as-is
+            else:
+                prepared_results[key] = value
+    
     return prepared_results
 
 if __name__ == '__main__':
@@ -1584,9 +1587,10 @@ if __name__ == '__main__':
     trained_combined_env.sac_defender = sac_defender
     trained_combined_env.dqn_agent = dqn_agent
 
+
     # Final evaluation
     print("\nRunning final evaluation...")
-    results = evaluate_model_with_three_agents(
+    evaluation_results = evaluate_model_with_three_agents(
         env=trained_combined_env,
         dqn_agent=dqn_agent,
         sac_attacker=sac_attacker,
@@ -1594,10 +1598,13 @@ if __name__ == '__main__':
         num_steps=100
     )
 
-    # Prepare results for plotting
-    serializable_results = prepare_results_for_plotting(results)
-    
-    # Plot results
-    plot_evaluation_results(serializable_results)
+    # Prepare results for plotting with the updated function
+    serializable_results = prepare_results_for_plotting(evaluation_results)
+
+    # Only plot if we have valid results
+    if serializable_results:
+        plot_evaluation_results(serializable_results)
+    else:
+        print("Warning: No valid results to plot")
 
     print("\nTraining completed successfully!")
