@@ -2,3 +2,10 @@
 /logs/*
 /models/*
 training_log_20241115_101546.txt
+EVCS_PINN_DATA_Model_IEEE_13_BUS.ipynb
+*.pdf
+*.png
+*.jpg
+*.eps
+*.svg
+*.pdf
