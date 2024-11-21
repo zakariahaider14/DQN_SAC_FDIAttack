@@ -200,17 +200,18 @@ def initialize_conductance_matrices():
     """Initialize conductance matrices from Y-bus matrix"""
     global G_d, G_q, B_d, B_q
     
-    # Ensure Y_bus_torch is complex
-    Y_bus_complex = Y_bus_torch.to(torch.complex64)
+    # Convert Y_bus to complex tensor explicitly
+    Y_bus_real = torch.real(Y_bus_torch).to(torch.float32)
+    Y_bus_imag = torch.imag(Y_bus_torch).to(torch.float32)
+    Y_bus_complex = torch.complex(Y_bus_real, Y_bus_imag)
     
     # Extract G (conductance) and B (susceptance) matrices
-    G_d = torch.real(Y_bus_complex).to(torch.float32)  # Real part for d-axis
-    G_q = torch.real(Y_bus_complex).to(torch.float32)  # Real part for q-axis
-    B_d = torch.imag(Y_bus_complex).to(torch.float32)  # Imaginary part for d-axis
-    B_q = torch.imag(Y_bus_complex).to(torch.float32)  # Imaginary part for q-axis
+    G_d = torch.real(Y_bus_complex)  # Real part for d-axis
+    G_q = torch.real(Y_bus_complex)  # Real part for q-axis
+    B_d = torch.imag(Y_bus_complex)  # Imaginary part for d-axis
+    B_q = torch.imag(Y_bus_complex)  # Imaginary part for q-axis
     
     return G_d, G_q, B_d, B_q
-
 # Call this function before training starts
 G_d, G_q, B_d, B_q = initialize_conductance_matrices()
 
@@ -1110,11 +1111,27 @@ def evaluate_model_with_three_agents(env, dqn_agent, sac_attacker, sac_defender,
         
         processed_data['avg_attack_durations'] = torch.tensor(avg_attack_durations)
 
-        return processed_data
+        return {
+            'time_steps': processed_data['time_steps'],
+            'cumulative_deviations': processed_data['cumulative_deviations'],
+            'voltage_deviations': processed_data['voltage_deviations'],
+            'attack_active_states': processed_data['attack_active_states'],
+            'target_evcs_history': processed_data['target_evcs_history'],
+            'attack_durations': processed_data['attack_durations'],
+            'dqn_actions': processed_data['dqn_actions'],
+            'sac_attacker_actions': processed_data['sac_attacker_actions'],
+            'sac_defender_actions': processed_data['sac_defender_actions'],
+            'observations': processed_data['observations'],
+            'rewards': processed_data['rewards'],
+            'evcs_attack_durations': processed_data['evcs_attack_durations'],
+            'attack_counts': processed_data['attack_counts'],
+            'total_durations': processed_data['total_durations'],
+            'avg_attack_durations': processed_data['avg_attack_durations']
+        }
 
     except Exception as e:
         print(f"Error in evaluation: {str(e)}")
-        return None, None
+        return {}
 
 def check_constraints(state, info):
     """Helper function to check individual constraints."""
