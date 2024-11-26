@@ -336,7 +336,7 @@ class CompetingHybridEnv(gym.Env):
             # Calculate rewards for each EVCS
             for i, deviation in enumerate(voltage_deviations):
                 if self.target_evcs[i] == 1:  # For targeted EVCSs
-                    if deviation > 0.05:  # Significant deviation
+                    if deviation > 0.1:  # Significant deviation
                         # Attacker gets positive reward for successful attack
                         attack_reward = 10.0 * deviation - 0.1 * self.current_time
                         # Defender gets negative reward proportional to deviation
@@ -453,37 +453,24 @@ class CompetingHybridEnv(gym.Env):
                         )
                         current_state = self.apply_defender_actions(current_state, defender_action.detach())
 
-                # Update state and calculate deviations
-                self.state = current_state
-                self.voltage_deviations = torch.abs(self.state[:self.NUM_EVCS] - 1.0)
-                max_deviations = torch.max(self.voltage_deviations).detach()
+            
+            # Update state
+            self.state = current_state
 
-                # Calculate rewards
-                rewards = self.calculate_rewards(self.voltage_deviations.detach())
-                reward = rewards['attacker'] if self.attack_active else rewards['defender']
+            self.voltage_deviations = np.abs(self.state[:self.NUM_EVCS] - 1.0)
+            max_deviations= np.max(self.voltage_deviations)
 
-                # Calculate deviations and check termination conditions
-                max_deviations = torch.max(self.voltage_deviations).detach()
-                done = bool(self.time_step_counter >= 1000 or max_deviations >= 0.5)
-                truncated = False
+            self.rewards = self.calculate_rewards(self.voltage_deviations)
 
-                # Get info
-                info = {
-                    'voltage_deviations': self.voltage_deviations.detach().cpu().numpy(),
-                    'cumulative_deviation': self.cumulative_deviation.detach().cpu().numpy(),
-                    'attack_active': self.attack_active,
-                    'target_evcs': self.target_evcs.detach().cpu().numpy(),
-                    'attack_duration': float(self.attack_duration),
-                }
+            
+            # Check if episode is done
+            done = self.time_step_counter >= 1000 or max_deviations>= 0.5
+            
+            # Get info
+            info = self.get_info(self.voltage_deviations, self.target_evcs, self.attack_duration, self.rewards)
+            
+            return self.state, self.rewards, done, False, info
 
-                return (
-                    self.state.detach().cpu().numpy(), 
-                    reward, 
-                    done, 
-                    truncated, 
-                    info
-                )
-                
         except Exception as e:
             print(f"Error in step: {str(e)}")
             return (
