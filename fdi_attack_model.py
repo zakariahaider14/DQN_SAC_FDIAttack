@@ -1563,7 +1563,7 @@ if __name__ == '__main__':
     # Train DQN with monitoring
     print("Training DQN agent...")
     dqn_agent.learn(
-        total_timesteps=5000,
+        total_timesteps=10000,
         callback=dqn_checkpoint,
         progress_bar=True
     )
@@ -1619,8 +1619,8 @@ if __name__ == '__main__':
         'MlpPolicy',
         sac_defender_env,
         verbose=1,
-        learning_rate=1e-6,
-        buffer_size=5000,
+        learning_rate=1e-4,
+        buffer_size=10000,
         batch_size=64,
         gamma=0.99,
         tau=0.005,
@@ -1648,7 +1648,7 @@ if __name__ == '__main__':
 # New Addition 
     print("Training the SAC Attacker agent...")
     sac_attacker.learn(
-        total_timesteps=5000,
+        total_timesteps=10000,   
         callback=sac_attacker_checkpoint,
         progress_bar=True
     )
@@ -1656,7 +1656,7 @@ if __name__ == '__main__':
 
     print("Training the SAC Defender agent...")
     sac_defender.learn(
-        total_timesteps=2500,
+        total_timesteps=10000,
         callback=sac_defender_checkpoint,
         progress_bar=True
     )
@@ -1676,7 +1676,7 @@ if __name__ == '__main__':
         ]:
             print(f"\nTraining {name}...")
             if name == "SAC Defender":
-                total_timesteps=2500
+                total_timesteps=5000
             else:
                 total_timesteps=5000
             agent.learn(
@@ -1711,7 +1711,7 @@ if __name__ == '__main__':
         sac_defender=sac_defender,
         Y_bus_tf=Y_bus_tf,
         bus_data=bus_data,
-        epochs=5000,
+        epochs=2500,
         batch_size=128
         )
 
